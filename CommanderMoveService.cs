@@ -1,0 +1,168 @@
+using UnityEngine;
+using System.Collections.Generic;
+using NuclearOption.Networking;
+
+namespace NuclearOptionCommander;
+
+internal sealed class CommanderMoveService
+{
+    private readonly CommanderSelectionService selectionService;
+    private readonly HashSet<Unit> stoppedUnits = new();
+    private readonly Dictionary<Unit, GlobalPosition> playerDestinations = new();
+
+    internal static CommanderMoveService? Instance { get; private set; }
+
+    internal bool HasCommandableSelection
+    {
+        get
+        {
+            for (int i = 0; i < selectionService.SelectedUnits.Count; i++)
+            {
+                if (CommanderGameAccess.ShouldAllowCommanderMove(selectionService.SelectedUnits[i]))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    internal CommanderMoveService(CommanderSelectionService selectionService)
+    {
+        this.selectionService = selectionService;
+        Instance = this;
+    }
+
+    internal void TryIssueMoveOrder(Vector2 screenPosition)
+    {
+        if (selectionService.SelectedUnits.Count == 0)
+        {
+            return;
+        }
+
+        Camera? camera = SceneSingleton<CameraStateManager>.i?.mainCamera;
+        if (camera == null)
+        {
+            return;
+        }
+
+        Ray ray = camera.ScreenPointToRay(screenPosition);
+        if (!Physics.Raycast(ray, out RaycastHit hit, 500000f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+        {
+            return;
+        }
+
+        GlobalPosition destination = GlobalPositionExtensions.ToGlobalPosition(hit.point);
+        for (int i = 0; i < selectionService.SelectedUnits.Count; i++)
+        {
+            Unit unit = selectionService.SelectedUnits[i];
+            if (!CommanderGameAccess.ShouldAllowCommanderMove(unit))
+            {
+                continue;
+            }
+
+            UnitCommand? unitCommand = CommanderGameAccess.GetUnitCommand(unit);
+            stoppedUnits.Remove(unit);
+            CommanderGameAccess.SetUnitHoldPosition(unit, false);
+            unitCommand?.SetDestination(destination, true);
+        }
+    }
+
+    internal void Tick()
+    {
+        stoppedUnits.RemoveWhere(static unit => unit == null || unit.disabled);
+        List<Unit>? staleDestinations = null;
+        foreach (KeyValuePair<Unit, GlobalPosition> entry in playerDestinations)
+        {
+            if (entry.Key != null
+                && !entry.Key.disabled
+                && CommanderGameAccess.HorizontalDistance(entry.Key.transform.position, entry.Value.ToLocalPosition()) > 25f)
+            {
+                continue;
+            }
+
+            staleDestinations ??= new List<Unit>();
+            staleDestinations.Add(entry.Key!);
+        }
+        if (staleDestinations != null)
+        {
+            for (int i = 0; i < staleDestinations.Count; i++)
+            {
+                playerDestinations.Remove(staleDestinations[i]);
+            }
+        }
+        if (stoppedUnits.Count == 0)
+        {
+            return;
+        }
+        foreach (Unit unit in stoppedUnits)
+        {
+            if (unit.rb == null)
+            {
+                continue;
+            }
+
+            unit.rb.velocity = Vector3.zero;
+            unit.rb.angularVelocity = Vector3.zero;
+        }
+    }
+
+    internal void StopSelectedUnits()
+    {
+        for (int i = 0; i < selectionService.SelectedUnits.Count; i++)
+        {
+            Unit unit = selectionService.SelectedUnits[i];
+            if (!CommanderGameAccess.ShouldAllowCommanderMove(unit))
+            {
+                continue;
+            }
+
+            CommanderGameAccess.SetUnitHoldPosition(unit, true);
+            CommanderGameAccess.GetUnitCommand(unit)?.SetDestination(unit.transform.GlobalPosition(), false);
+            stoppedUnits.Add(unit);
+            playerDestinations.Remove(unit);
+        }
+    }
+
+    internal void ResumeAiForSelectedUnits()
+    {
+        for (int i = 0; i < selectionService.SelectedUnits.Count; i++)
+        {
+            Unit unit = selectionService.SelectedUnits[i];
+            if (!CommanderGameAccess.ShouldAllowCommanderMove(unit))
+            {
+                continue;
+            }
+
+            CommanderGameAccess.SetUnitHoldPosition(unit, false);
+            stoppedUnits.Remove(unit);
+            playerDestinations.Remove(unit);
+            if (MissionPosition.TryGetClosestPosition(unit, out GlobalPosition destination))
+            {
+                CommanderGameAccess.GetUnitCommand(unit)?.SetDestination(destination, false);
+            }
+        }
+    }
+
+    internal bool TryGetPlayerDestination(Unit unit, out GlobalPosition destination)
+    {
+        return playerDestinations.TryGetValue(unit, out destination);
+    }
+
+    internal static void NotifyPlayerDestination(UnitCommand command, GlobalPosition destination, Player? player)
+    {
+        if (player == null || Instance == null)
+        {
+            return;
+        }
+
+        Unit? unit = command.GetComponent<Unit>();
+        if (unit == null || !CommanderGameAccess.ShouldAllowCommanderMove(unit))
+        {
+            return;
+        }
+
+        Instance.stoppedUnits.Remove(unit);
+        Instance.playerDestinations[unit] = destination;
+    }
+}

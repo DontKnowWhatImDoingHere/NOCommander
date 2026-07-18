@@ -1,0 +1,286 @@
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+namespace NuclearOptionCommander;
+
+internal sealed class CommanderMarkerService
+{
+    private const float RefreshIntervalSeconds = 1f;
+
+    private readonly CommanderSelectionService selectionService;
+    private FactionHQ? boundHq;
+    private Transform? markerRoot;
+    private float nextRefreshTime;
+    private readonly Dictionary<Unit, CommanderMarkerView> markerViews = new();
+    private readonly HashSet<Unit> currentUnits = new();
+    private readonly List<Unit> unitsToRemove = new();
+
+    internal CommanderMarkerService(CommanderSelectionService selectionService)
+    {
+        this.selectionService = selectionService;
+    }
+
+    internal void Activate()
+    {
+        nextRefreshTime = CommanderScheduler.Stagger("markers.bindings", RefreshIntervalSeconds, 0.35f);
+        EnsureMarkerRoot();
+        RefreshBindings();
+        SyncExistingUnits();
+    }
+
+    internal void Deactivate()
+    {
+        UnbindHq();
+        ClearViews();
+        DestroyMarkerRoot();
+    }
+
+    internal void Tick()
+    {
+        EnsureMarkerRoot();
+
+        if (!CommanderScheduler.IsDue(ref nextRefreshTime, RefreshIntervalSeconds))
+        {
+            UpdateMarkerViews();
+            return;
+        }
+
+        RefreshBindings();
+        SyncExistingUnits();
+        UpdateMarkerViews();
+    }
+
+    private void RefreshBindings()
+    {
+        FactionHQ? localHq = CommanderGameAccess.GetLocalHq();
+        if (ReferenceEquals(localHq, boundHq) && boundHq != null)
+        {
+            return;
+        }
+
+        UnbindHq();
+        ClearViews();
+        boundHq = localHq;
+        if (boundHq == null)
+        {
+            return;
+        }
+
+        boundHq.onRegisterUnit += OnRegisterUnit;
+        boundHq.onRemoveUnit += OnRemoveUnit;
+        boundHq.onDiscoverUnit += OnDiscoverUnit;
+        boundHq.onForgetUnit += OnForgetUnit;
+    }
+
+    private void UnbindHq()
+    {
+        if (boundHq == null)
+        {
+            return;
+        }
+
+        boundHq.onRegisterUnit -= OnRegisterUnit;
+        boundHq.onRemoveUnit -= OnRemoveUnit;
+        boundHq.onDiscoverUnit -= OnDiscoverUnit;
+        boundHq.onForgetUnit -= OnForgetUnit;
+        boundHq = null;
+    }
+
+    private void SyncExistingUnits()
+    {
+        if (boundHq?.factionUnits == null)
+        {
+            return;
+        }
+
+        currentUnits.Clear();
+        foreach (PersistentID unitId in boundHq.factionUnits)
+        {
+            if (!unitId.TryGetUnit(out Unit unit))
+            {
+                continue;
+            }
+
+            currentUnits.Add(unit);
+            TryCreateMarker(unit);
+        }
+
+        foreach (KeyValuePair<PersistentID, TrackingInfo> entry in boundHq.trackingDatabase)
+        {
+            if (!entry.Key.TryGetUnit(out Unit unit))
+            {
+                continue;
+            }
+
+            currentUnits.Add(unit);
+            TryCreateMarker(unit);
+        }
+
+        unitsToRemove.Clear();
+        foreach (KeyValuePair<Unit, CommanderMarkerView> pair in markerViews)
+        {
+            if (!currentUnits.Contains(pair.Key) || !CommanderGameAccess.ShouldTrackUnit(pair.Key, boundHq))
+            {
+                unitsToRemove.Add(pair.Key);
+            }
+        }
+
+        for (int i = 0; i < unitsToRemove.Count; i++)
+        {
+            RemoveMarker(unitsToRemove[i]);
+        }
+    }
+
+    private void OnRegisterUnit(Unit unit)
+    {
+        TryCreateMarker(unit);
+    }
+
+    private void OnRemoveUnit(Unit unit)
+    {
+        RemoveMarker(unit);
+    }
+
+    private void OnDiscoverUnit(PersistentID unitId)
+    {
+        if (unitId.TryGetUnit(out Unit unit))
+        {
+            TryCreateMarker(unit);
+        }
+    }
+
+    private void OnForgetUnit(PersistentID unitId)
+    {
+        if (unitId.TryGetUnit(out Unit unit))
+        {
+            RemoveMarker(unit);
+        }
+    }
+
+    private bool TryCreateMarker(Unit? unit)
+    {
+        if (markerRoot == null || !CommanderGameAccess.ShouldTrackUnit(unit, boundHq) || unit == null)
+        {
+            return false;
+        }
+
+        if (markerViews.ContainsKey(unit))
+        {
+            return false;
+        }
+
+        Image? image = CommanderGameAccess.CreateMarkerImage(markerRoot);
+        if (image == null)
+        {
+            return false;
+        }
+
+        markerViews[unit] = new CommanderMarkerView(unit, image, boundHq!);
+        return true;
+    }
+
+    private void UpdateMarkerViews()
+    {
+        Camera? camera = SceneSingleton<CameraStateManager>.i?.mainCamera;
+        if (camera == null)
+        {
+            return;
+        }
+
+        unitsToRemove.Clear();
+        foreach (KeyValuePair<Unit, CommanderMarkerView> pair in markerViews)
+        {
+            if (pair.Key.disabled || !CommanderGameAccess.ShouldTrackUnit(pair.Key, boundHq))
+            {
+                unitsToRemove.Add(pair.Key);
+                continue;
+            }
+
+            pair.Value.Update(camera, selectionService.IsSelected(pair.Key));
+        }
+
+        for (int i = 0; i < unitsToRemove.Count; i++)
+        {
+            RemoveMarker(unitsToRemove[i]);
+        }
+    }
+
+    private void RemoveMarker(Unit unit)
+    {
+        if (!markerViews.TryGetValue(unit, out CommanderMarkerView view))
+        {
+            return;
+        }
+
+        view.Dispose();
+        markerViews.Remove(unit);
+    }
+
+    private void EnsureMarkerRoot()
+    {
+        if (markerRoot != null)
+        {
+            return;
+        }
+
+        Transform? parent = CommanderGameAccess.GetMarkerParent();
+        if (parent == null)
+        {
+            return;
+        }
+
+        GameObject rootObject = new("CommanderMarkerRoot", typeof(RectTransform));
+        RectTransform rectTransform = rootObject.GetComponent<RectTransform>();
+        rectTransform.SetParent(parent, false);
+        rectTransform.anchorMin = Vector2.zero;
+        rectTransform.anchorMax = Vector2.one;
+        rectTransform.offsetMin = Vector2.zero;
+        rectTransform.offsetMax = Vector2.zero;
+        rectTransform.pivot = new Vector2(0.5f, 0.5f);
+        markerRoot = rectTransform;
+    }
+
+    private void DestroyMarkerRoot()
+    {
+        if (markerRoot == null)
+        {
+            return;
+        }
+
+        Object.Destroy(markerRoot.gameObject);
+        markerRoot = null;
+    }
+
+    private void ClearViews()
+    {
+        foreach (CommanderMarkerView view in markerViews.Values)
+        {
+            view.Dispose();
+        }
+
+        markerViews.Clear();
+    }
+
+    internal bool TryGetMarkerUnitAt(Vector2 screenPosition, out Unit unit)
+    {
+        unit = null!;
+        float nearestDistance = float.MaxValue;
+
+        foreach (KeyValuePair<Unit, CommanderMarkerView> pair in markerViews)
+        {
+            if (!pair.Value.TryHit(screenPosition, out float hitDistance))
+            {
+                continue;
+            }
+
+            if (hitDistance < nearestDistance)
+            {
+                nearestDistance = hitDistance;
+                unit = pair.Key;
+            }
+        }
+
+        return nearestDistance < float.MaxValue;
+    }
+}
