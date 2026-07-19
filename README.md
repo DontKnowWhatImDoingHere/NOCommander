@@ -6,7 +6,7 @@ airbases, dynamic map, faction economy, and tracking data where possible.
 
 ## Current Features
 
-- Free commander camera toggled with `F8`
+- Free commander camera
 - Lightweight friendly and datalink unit markers
 - 3D single selection and `Shift` multi-selection
 - 3D movement orders for friendly ground vehicles and ships
@@ -31,21 +31,3 @@ Download `NuclearOptionCommander.dll` from the latest release and place it in:
 ```text
 Nuclear Option\BepInEx\plugins\NuclearOptionCommander\
 ```
-
-## Building From Source
-
-Open `NuclearOptionCommander.csproj` with a compatible .NET SDK or IDE and pass
-the Nuclear Option installation as the `GameDir` MSBuild property:
-
-```powershell
-dotnet build -c Release -p:GameDir="D:\SteamLibrary\steamapps\common\Nuclear Option"
-```
-
-`NUCLEAR_OPTION_DIR` can be set instead of passing `GameDir`. Local helper and
-deployment scripts are intentionally not part of the repository.
-
-## Notes
-
-The mod patches runtime methods with Harmony. It does not modify or replace any
-base-game files. Game updates may change private fields or methods used by the
-integration and require corresponding compatibility updates.
