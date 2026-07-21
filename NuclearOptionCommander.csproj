@@ -33,6 +33,10 @@
       <HintPath>$(GameDir)\NuclearOption_Data\Managed\Mirage.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="Rewired_Core">
+      <HintPath>$(GameDir)\NuclearOption_Data\Managed\Rewired_Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine">
       <HintPath>$(GameDir)\NuclearOption_Data\Managed\UnityEngine.dll</HintPath>
       <Private>false</Private>

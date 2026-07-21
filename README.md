@@ -14,15 +14,13 @@ airbases, dynamic map, faction economy, and tracking data where possible.
 - Tactical map and draggable/scalable commander UI
 - Cargo and naval supply aircraft missions
 - Configurable Air Command missions and aircraft loadouts
-- Radar controls and experimental mobile emplacement relocation
+- More unit-specific controls and experimental mobile emplacement relocation
 
 ## Requirements
 
 - Nuclear Option
 - BepInEx 5
-- Windows
-- A .NET SDK with a C# compiler
-- .NET Framework 4.8 or 4.8.1 reference assemblies
+- BepInEx Configuration Manager
 
 ## Installation
 
