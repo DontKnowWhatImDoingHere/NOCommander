@@ -67,7 +67,7 @@ internal sealed class CommanderWorldMarkerRenderer
         }
 
         Vector2 guiPoint = CommanderUiScale.ScreenToGui(screen);
-        Rect marker = new(guiPoint.x - 30f, guiPoint.y - 13f, 60f, 26f);
+        Rect marker = new(guiPoint.x - 30f, guiPoint.y - 13f, 65f, 32f);
         Color previous = GUI.color;
         GUI.color = color;
         GUI.Box(marker, label, CommanderUiTheme.Panel);
