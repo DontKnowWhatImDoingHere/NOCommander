@@ -36,8 +36,8 @@ internal sealed class CommanderWorldMarkerRenderer
             Unit unit = selectionService.SelectedUnits[i];
             if (moveService.TryGetPlayerDestination(unit, out GlobalPosition destination))
             {
+                DrawLineToDestination(camera, unit.transform.position, destination, new Color(0.2f, 0.85f, 0.82f, 0.4f), CommanderSettings.LineThickness);
                 DrawMarker(camera, destination, "MOVE", new Color(0.2f, 0.85f, 0.82f, 0.9f));
-                DrawLineToDestination(camera, unit.transform.position, destination);
             }
         }
 
@@ -76,7 +76,7 @@ internal sealed class CommanderWorldMarkerRenderer
         GUI.color = previous;
     }
 
-    private static void DrawLineToDestination(Camera camera, Vector3 unitWorldPos, GlobalPosition destination)
+    private static void DrawLineToDestination(Camera camera, Vector3 unitWorldPos, GlobalPosition destination, Color lineColor, float lineThickness)
     {
         Vector3 destWorld = destination.ToLocalPosition();
         Vector3 unitScreen = camera.WorldToScreenPoint(unitWorldPos);
@@ -92,8 +92,8 @@ internal sealed class CommanderWorldMarkerRenderer
         Vector2 destGui = CommanderUiScale.ScreenToGui(destScreen);
 
         Color previous = GUI.color;
-        GUI.color = new Color(0.2f, 0.85f, 0.82f, 0.45f);
-        DrawGuiLine(unitGui, destGui, 2f);
+        GUI.color = lineColor;
+        DrawGuiLine(unitGui, destGui, lineThickness);
         GUI.color = previous;
     }
 
