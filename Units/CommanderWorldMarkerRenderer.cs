@@ -87,6 +87,7 @@ internal sealed class CommanderWorldMarkerRenderer
             return;
         }
 
+        // Convert screen coords to GUI space (Y-flipped, scaled)
         Vector2 unitGui = CommanderUiScale.ScreenToGui(unitScreen);
         Vector2 destGui = CommanderUiScale.ScreenToGui(destScreen);
 
@@ -105,8 +106,12 @@ internal sealed class CommanderWorldMarkerRenderer
 
         float angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
         Matrix4x4 saved = GUI.matrix;
-        GUIUtility.RotateAroundPivot(angle, from);
-        GUI.DrawTexture(new Rect(from.x, from.y - thickness * 0.5f, length, thickness), CommanderUiTheme.BorderTexture);
+        Matrix4x4 rotation = Matrix4x4.TRS(
+            new Vector3(from.x, from.y, 0f),
+            Quaternion.Euler(0f, 0f, angle),
+            Vector3.one);
+        GUI.matrix = saved * rotation;
+        GUI.DrawTexture(new Rect(0f, -thickness * 0.5f, length, thickness), CommanderUiTheme.BorderTexture);
         GUI.matrix = saved;
     }
 }

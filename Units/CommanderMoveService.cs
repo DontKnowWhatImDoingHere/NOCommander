@@ -77,8 +77,7 @@ internal sealed class CommanderMoveService
 
             if (commandableCount > 1)
             {
-                float offset = (assignedIndex - (commandableCount - 1) / 2f) * spacing;
-                destination = new GlobalPosition(destination.x + offset, destination.y, destination.z);
+                destination = ApplyFormationOffset(destination, assignedIndex, commandableCount, spacing);
                 assignedIndex++;
             }
 
@@ -86,6 +85,36 @@ internal sealed class CommanderMoveService
             stoppedUnits.Remove(unit);
             CommanderGameAccess.SetUnitHoldPosition(unit, false);
             unitCommand?.SetDestination(destination, true);
+        }
+    }
+
+    private static GlobalPosition ApplyFormationOffset(GlobalPosition center, int index, int count, float spacing)
+    {
+        string formation = CommanderSettings.MoveFormation;
+        if (formation == "Line")
+        {
+            float offset = (index - (count - 1) / 2f) * spacing;
+            return new GlobalPosition(center.x + offset, center.y, center.z);
+        }
+        else if (formation == "Quadratic")
+        {
+            int cols = Mathf.CeilToInt(Mathf.Sqrt(count));
+            int row = index / cols;
+            int col = index % cols;
+            float offsetX = (col - (cols - 1) / 2f) * spacing;
+            int rowsTotal = Mathf.CeilToInt((float)count / cols);
+            float offsetZ = (row - (rowsTotal - 1) / 2f) * spacing;
+            return new GlobalPosition(center.x + offsetX, center.y, center.z + offsetZ);
+        }
+        else
+        {
+            // Circular (default)
+            if (count == 1) return center;
+            float angle = 2f * Mathf.PI * index / count;
+            float radius = count * spacing / (2f * Mathf.PI);
+            float offsetX = Mathf.Cos(angle) * radius;
+            float offsetZ = Mathf.Sin(angle) * radius;
+            return new GlobalPosition(center.x + offsetX, center.y, center.z + offsetZ);
         }
     }
 

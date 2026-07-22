@@ -25,6 +25,7 @@ internal static class CommanderSettings
     internal static bool ShowWorldMarkers { get => Get("UI", "ShowWorldMarkers", true); set => Set("UI", "ShowWorldMarkers", value); }
 
     internal static float MoveSpacing { get => Get("Controls", "MoveSpacing", 50f); set => Set("Controls", "MoveSpacing", value); }
+    internal static string MoveFormation { get => Get("Controls", "MoveFormation", "Circular"); set => Set("Controls", "MoveFormation", value); }
 
     internal static string AirCommandMode { get => Get("Air Command", "MissionMode", "AirGuard"); set => Set("Air Command", "MissionMode", value); }
     internal static string AirLoadoutBalance { get => Get("Air Command", "LoadoutBalance", "Primary"); set => Set("Air Command", "LoadoutBalance", value); }
