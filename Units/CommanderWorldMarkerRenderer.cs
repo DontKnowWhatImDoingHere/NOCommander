@@ -37,6 +37,7 @@ internal sealed class CommanderWorldMarkerRenderer
             if (moveService.TryGetPlayerDestination(unit, out GlobalPosition destination))
             {
                 DrawMarker(camera, destination, "MOVE", new Color(0.2f, 0.85f, 0.82f, 0.9f));
+                DrawLineToDestination(camera, unit.transform.position, destination);
             }
         }
 
@@ -73,5 +74,39 @@ internal sealed class CommanderWorldMarkerRenderer
         GUI.Box(marker, label, CommanderUiTheme.Panel);
         CommanderUiTheme.DrawFrame(marker, 1f);
         GUI.color = previous;
+    }
+
+    private static void DrawLineToDestination(Camera camera, Vector3 unitWorldPos, GlobalPosition destination)
+    {
+        Vector3 destWorld = destination.ToLocalPosition();
+        Vector3 unitScreen = camera.WorldToScreenPoint(unitWorldPos);
+        Vector3 destScreen = camera.WorldToScreenPoint(destWorld);
+
+        if (unitScreen.z <= 0f && destScreen.z <= 0f)
+        {
+            return;
+        }
+
+        Vector2 unitGui = CommanderUiScale.ScreenToGui(unitScreen);
+        Vector2 destGui = CommanderUiScale.ScreenToGui(destScreen);
+
+        Color previous = GUI.color;
+        GUI.color = new Color(0.2f, 0.85f, 0.82f, 0.45f);
+        DrawGuiLine(unitGui, destGui, 2f);
+        GUI.color = previous;
+    }
+
+    private static void DrawGuiLine(Vector2 from, Vector2 to, float thickness)
+    {
+        CommanderUiTheme.Ensure();
+        Vector2 delta = to - from;
+        float length = delta.magnitude;
+        if (length < 1f) return;
+
+        float angle = Mathf.Atan2(delta.y, delta.x) * Mathf.Rad2Deg;
+        Matrix4x4 saved = GUI.matrix;
+        GUIUtility.RotateAroundPivot(angle, from);
+        GUI.DrawTexture(new Rect(from.x, from.y - thickness * 0.5f, length, thickness), CommanderUiTheme.BorderTexture);
+        GUI.matrix = saved;
     }
 }
