@@ -57,18 +57,12 @@ internal sealed class CommanderInputController
 
         if (Input.GetMouseButtonDown(0))
         {
-            if (CommanderSettings.SwapMouseButtons)
-                HandleSecondaryClick(mousePosition);
-            else
-                HandlePrimaryClick(mousePosition);
+            HandlePrimaryClick(mousePosition);
         }
 
         if (Input.GetMouseButtonDown(1))
         {
-            if (CommanderSettings.SwapMouseButtons)
-                HandlePrimaryClick(mousePosition);
-            else
-                HandleSecondaryClick(mousePosition);
+            HandleSecondaryClick(mousePosition);
         }
     }
 
