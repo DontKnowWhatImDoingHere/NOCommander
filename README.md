@@ -1,8 +1,6 @@
 # Nuclear Option Commander
 
-A BepInEx commander-mode mod for Nuclear Option. The mod is intended for the
-host or singleplayer and reuses the game's unit commands, aircraft AI, depots,
-airbases, dynamic map, faction economy, and tracking data where possible.
+Nuclear Option mod which introduces RTS-mechanics.
 
 ## Current Features
 
@@ -14,7 +12,7 @@ airbases, dynamic map, faction economy, and tracking data where possible.
 - Tactical map and draggable/scalable commander UI
 - Cargo and naval supply aircraft missions
 - Configurable Air Command missions and aircraft loadouts
-- More unit-specific controls and experimental mobile emplacement relocation
+- More
 
 ## Requirements
 
@@ -24,8 +22,13 @@ airbases, dynamic map, faction economy, and tracking data where possible.
 
 ## Installation
 
-Download `NuclearOptionCommander.dll` from the latest release and place it in:
+Download `NuclearOptionCommander.zip` from the latest release
+Open steam, right click Nuclear Option -> manage -> browse local files
+If no BepInEx folder is present, install BepInEx first
+Open NuclearOptionCommander.zip
+go to:
 
 ```text
-Nuclear Option\BepInEx\plugins\NuclearOptionCommander\
+Nuclear Option\BepInEx\plugins
 ```
+Place the `NuclearOptionCommander` folder from the zip into the plugins folder

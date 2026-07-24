@@ -55,12 +55,12 @@ internal sealed class CommanderInputController
             return;
         }
 
-        if (Input.GetMouseButtonDown(0))
+        if (CommanderSettings.PrimaryAction.IsDown())
         {
             HandlePrimaryClick(mousePosition);
         }
 
-        if (Input.GetMouseButtonDown(1))
+        if (CommanderSettings.SecondaryAction.IsDown())
         {
             HandleSecondaryClick(mousePosition);
         }
@@ -97,7 +97,7 @@ internal sealed class CommanderInputController
             return;
         }
 
-        bool additive = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+        bool additive = CommanderSettings.AddToSelection.IsPressed();
 
         if (markerService.TryGetMarkerUnitAt(mousePosition, out Unit markerUnit))
         {
