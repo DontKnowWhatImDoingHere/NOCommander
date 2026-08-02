@@ -47,3 +47,24 @@ internal static class CommanderFollowSonicBoomPatch
         }
     }
 }
+
+[HarmonyPatch(typeof(CameraFreeState), nameof(CameraFreeState.UpdateState))]
+internal static class CommanderPovShiftSpeedPatch
+{
+    private const float BasegameShiftBoostCompensation = 0.1f;
+
+    private static void Prefix(CameraStateManager cam, out float __state)
+    {
+        __state = cam.desiredTransSpeed;
+        if (CommanderCameraFollowService.IsPovActive && Input.GetKey(KeyCode.LeftShift))
+        {
+            // CameraFreeState multiplies movement acceleration by ten while Left Shift is held.
+            cam.desiredTransSpeed *= BasegameShiftBoostCompensation;
+        }
+    }
+
+    private static void Postfix(CameraStateManager cam, float __state)
+    {
+        cam.desiredTransSpeed = __state;
+    }
+}

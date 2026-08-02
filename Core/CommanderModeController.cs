@@ -17,6 +17,9 @@ internal sealed class CommanderModeController : MonoBehaviour
     private CommanderRepairService? repairService;
     private CommanderSupplyHeliService? supplyHeliService;
     private CommanderAirCommandService? airCommandService;
+    private CommanderNavalPurchaseService? navalPurchaseService;
+    private CommanderSamSiteAnalyzerService? samSiteAnalyzerService;
+    private CommanderSamSiteService? samSiteService;
     private CommanderSpawnService? spawnService;
     private CommanderMarkerService? markerService;
     private CommanderMoveService? moveService;
@@ -43,12 +46,19 @@ internal sealed class CommanderModeController : MonoBehaviour
         repairService = new CommanderRepairService();
         supplyHeliService = new CommanderSupplyHeliService();
         airCommandService = new CommanderAirCommandService(tacticalMapService);
+        navalPurchaseService = new CommanderNavalPurchaseService(tacticalMapService);
+        samSiteAnalyzerService = new CommanderSamSiteAnalyzerService();
+        samSiteService = new CommanderSamSiteService(
+            samSiteAnalyzerService,
+            supplyHeliService);
         spawnService = new CommanderSpawnService(selectionService, factionVehicleService, tacticalMapService);
         persistentOperations = new CommanderPersistentOperations(
             spawnService,
             supplyHeliService,
             airCommandService,
-            mobileEmplacementService);
+            mobileEmplacementService,
+            samSiteAnalyzerService,
+            samSiteService);
         markerService = new CommanderMarkerService(selectionService);
         moveService = new CommanderMoveService(selectionService);
         overlayUi = new CommanderOverlayUi(
@@ -61,6 +71,9 @@ internal sealed class CommanderModeController : MonoBehaviour
             directPathService,
             supplyHeliService,
             airCommandService,
+            navalPurchaseService,
+            samSiteAnalyzerService,
+            samSiteService,
             () => Deactivate());
         inputController = new CommanderInputController(
             overlayUi,
@@ -89,7 +102,7 @@ internal sealed class CommanderModeController : MonoBehaviour
             overlayUi?.ToggleScreenshotUi();
         }
 
-        if (GameManager.GetLocalAircraft(out _))
+        if (IsPlayerInOperationalAircraft())
         {
             Deactivate(restorePreviousCamera: false);
             return;
@@ -105,6 +118,8 @@ internal sealed class CommanderModeController : MonoBehaviour
         mobileEmplacementService?.TickActive();
         supplyHeliService?.TickActive();
         airCommandService?.TickActive();
+        navalPurchaseService?.TickActive();
+        samSiteAnalyzerService?.TickActive();
         spawnService?.TickActive();
         overlayUi?.Tick();
         inputController?.Tick();
@@ -138,7 +153,7 @@ internal sealed class CommanderModeController : MonoBehaviour
 
     private bool ShouldShowCommanderEntry()
     {
-        if (GameManager.GetLocalAircraft(out _)
+        if (IsPlayerInOperationalAircraft()
             || (GameManager.gameState != GameState.SinglePlayer && GameManager.gameState != GameState.Multiplayer))
         {
             return false;
@@ -191,7 +206,7 @@ internal sealed class CommanderModeController : MonoBehaviour
             return;
         }
 
-        if (GameManager.GetLocalAircraft(out _))
+        if (IsPlayerInOperationalAircraft())
         {
             CommanderPlugin.Log.LogWarning("Commander mode is only available while the player is outside an aircraft.");
             return;
@@ -217,6 +232,8 @@ internal sealed class CommanderModeController : MonoBehaviour
         mobileEmplacementService?.Activate();
         supplyHeliService?.Activate();
         airCommandService?.Activate();
+        navalPurchaseService?.Activate();
+        samSiteAnalyzerService?.Activate();
         spawnService?.Activate();
         overlayUi?.Activate();
         if (!string.IsNullOrEmpty(cameraController.MissingBindingWarning))
@@ -246,12 +263,21 @@ internal sealed class CommanderModeController : MonoBehaviour
         directPathService?.Deactivate();
         supplyHeliService?.Deactivate();
         airCommandService?.Deactivate();
+        navalPurchaseService?.Deactivate();
+        samSiteAnalyzerService?.Deactivate();
         spawnService?.Deactivate();
         overlayUi?.Deactivate();
         tacticalMapService?.Close();
         cursorController?.Deactivate();
         cameraController?.Deactivate(restorePreviousCamera);
         CommanderPlugin.Log.LogInfo("Commander mode disabled.");
+    }
+
+    private static bool IsPlayerInOperationalAircraft()
+    {
+        return GameManager.GetLocalAircraft(out Aircraft aircraft)
+            && aircraft != null
+            && !aircraft.disabled;
     }
 
     private void OnActiveSceneChanged(Scene previousScene, Scene newScene)
@@ -266,6 +292,9 @@ internal sealed class CommanderModeController : MonoBehaviour
         repairService?.ResetSession();
         supplyHeliService?.ResetSession();
         airCommandService?.ResetSession();
+        navalPurchaseService?.ResetSession();
+        samSiteService?.ResetSession();
+        samSiteAnalyzerService?.ResetSession();
         aircraftSelectionMenuPresent = false;
         nextInactiveEntryProbeAt = 0f;
         factionVehicleService?.ResetSession();

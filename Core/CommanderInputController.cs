@@ -38,6 +38,11 @@ internal sealed class CommanderInputController
 
     internal void Tick()
     {
+        if (CommanderNavalPurchaseService.Instance?.AwaitingRallySelection == true)
+        {
+            return;
+        }
+
         if (spawnService.IsMapInteractionActive())
         {
             return;

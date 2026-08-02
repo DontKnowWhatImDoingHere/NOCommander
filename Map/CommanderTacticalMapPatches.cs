@@ -18,7 +18,8 @@ internal static class CommanderRallyMapSelectionPatch
 {
     private static bool Prefix()
     {
-        return CommanderSpawnService.Instance?.AwaitingRallyPointSelection != true;
+        return CommanderSpawnService.Instance?.AwaitingRallyPointSelection != true
+            && CommanderNavalPurchaseService.Instance?.AwaitingRallySelection != true;
     }
 }
 

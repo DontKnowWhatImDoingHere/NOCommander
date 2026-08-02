@@ -22,6 +22,7 @@ internal sealed partial class CommanderAirCommandService
     private readonly List<Aircraft> staleAircraft = new();
 
     private PendingAreaSelection? pendingAreaSelection;
+    private Aircraft? pendingMissionRelocation;
     private PendingAircraftSpawn? pendingAircraftSpawn;
     private AirCommandMode selectedMode = AirCommandMode.AirGuard;
     private int selectedOptionIndex;
@@ -72,8 +73,12 @@ internal sealed partial class CommanderAirCommandService
             ApplySelectedWeaponsAndSort();
         }
     }
-    internal bool AwaitingAreaSelection => pendingAreaSelection != null;
-    internal float PendingMissionRadius => pendingAreaSelection != null ? GetMissionRadius(pendingAreaSelection.Option.Mode) : 0f;
+    internal bool AwaitingAreaSelection => pendingAreaSelection != null || pendingMissionRelocation != null;
+    internal float PendingMissionRadius => pendingAreaSelection != null
+        ? GetMissionRadius(pendingAreaSelection.Option.Mode)
+        : pendingMissionRelocation != null && missions.TryGetValue(pendingMissionRelocation, out AirMission relocationMission)
+            ? relocationMission.Radius
+            : 0f;
     internal int ActiveMissionCount => missions.Count;
     internal bool CanLaunchSelected => SelectedOption != null
         && SelectedPrimaryWeapon != null
@@ -113,6 +118,7 @@ internal sealed partial class CommanderAirCommandService
     {
         uiVisible = false;
         pendingAreaSelection = null;
+        pendingMissionRelocation = null;
         pendingAircraftSpawn = null;
         options.Clear();
         weaponOptions.Clear();
@@ -128,7 +134,7 @@ internal sealed partial class CommanderAirCommandService
 
     internal void TickActive()
     {
-        if (pendingAreaSelection != null)
+        if (AwaitingAreaSelection)
         {
             if (CommanderGameInput.CancelDown)
             {
@@ -291,6 +297,47 @@ internal sealed partial class CommanderAirCommandService
         SetStatus($"{CommanderGameAccess.GetUnitLabel(aircraft)} ordered to RTB.");
     }
 
+    internal float GetMissionRadiusKm(Aircraft aircraft)
+    {
+        return missions.TryGetValue(aircraft, out AirMission mission)
+            ? mission.Radius / 1000f
+            : 0f;
+    }
+
+    internal void StepMissionRadius(Aircraft aircraft, float deltaKm)
+    {
+        if (!missions.TryGetValue(aircraft, out AirMission mission))
+        {
+            return;
+        }
+
+        mission.Radius = Mathf.Clamp(mission.Radius / 1000f + deltaKm, 5f, 150f) * 1000f;
+        DestroyMissionMapVisual(mission);
+        if (ReferenceEquals(selectedMissionAircraft, aircraft))
+        {
+            EnsureMissionMapVisual(mission);
+        }
+        SetStatus($"{GetModeLabel(mission.Mode)} radius set to {mission.Radius / 1000f:0} km.");
+    }
+
+    internal void BeginMissionAreaEdit(Aircraft aircraft)
+    {
+        if (!missions.ContainsKey(aircraft))
+        {
+            return;
+        }
+
+        pendingAreaSelection = null;
+        pendingMissionRelocation = aircraft;
+        selectedMissionAircraft = aircraft;
+        tacticalMapService.OpenFullscreen();
+        tacticalMapService.SuppressMapFollow = true;
+        mapClickTracker.Reset();
+        UpdatePendingAreaPreview();
+        RefreshMissionMapVisuals();
+        SetStatus("Select the new mission-area center on the tactical map or in the 3D world.");
+    }
+
     internal void SelectPrimaryWeapon(int index)
     {
         selectedPrimaryWeaponIndex = index >= 0 && index < weaponOptions.Count ? index : -1;
@@ -330,6 +377,7 @@ internal sealed partial class CommanderAirCommandService
             return;
         }
 
+        pendingMissionRelocation = null;
         pendingAreaSelection = new PendingAreaSelection(option, airbase.Airbase);
         tacticalMapService.OpenFullscreen();
         tacticalMapService.SuppressMapFollow = true;
@@ -340,7 +388,7 @@ internal sealed partial class CommanderAirCommandService
 
     internal bool TrySetAreaFromWorld(Vector2 screenPosition)
     {
-        if (pendingAreaSelection == null)
+        if (!AwaitingAreaSelection)
         {
             return false;
         }
@@ -398,14 +446,6 @@ internal sealed partial class CommanderAirCommandService
             || !Instance.missions.TryGetValue(aircraft, out AirMission mission))
         {
             return false;
-        }
-
-        if (KeepsStationInMissionArea(mission.Mode)
-            && mission.Mode != AirCommandMode.AwacsJammer
-            && !FastMath.InRange(aircraft.GlobalPosition(), mission.AreaCenter, mission.Radius))
-        {
-            result = new CombatAI.TargetSearchResults(null!, null!, 0f, false);
-            return true;
         }
 
         if (mission.Returning)
@@ -621,13 +661,18 @@ internal sealed partial class CommanderAirCommandService
                     || target.NetworkHQ == null
                     || target.NetworkHQ == hq
                     || !IsTargetEligible(target, mission.Mode, mission.TargetOrdnance)
-                    || (mission.Mode != AirCommandMode.AwacsJammer
+                    || (TargetsRestrictedToMissionArea(mission.Mode)
                         && !FastMath.InRange(tracking.GetPosition(), mission.AreaCenter, mission.Radius)))
                 {
                     continue;
                 }
 
                 float range = Mathf.Max(FastMath.Distance(tracking.GetPosition(), aircraft.GlobalPosition()), 100f);
+                if (mission.Mode == AirCommandMode.AirGuard
+                    && range > station.WeaponInfo.targetRequirements.maxRange * 1.05f)
+                {
+                    continue;
+                }
                 if (mission.Mode == AirCommandMode.AwacsJammer
                     && (range > station.WeaponInfo.targetRequirements.maxRange
                         || !target.LineOfSight(aircraft.transform.position, 1000f)))
@@ -635,7 +680,13 @@ internal sealed partial class CommanderAirCommandService
                     continue;
                 }
 
-                OpportunityThreat assessment = CombatAI.AnalyzeTarget(station, aircraft, tracking, 0f, range, mobile: true);
+                OpportunityThreat assessment = CombatAI.AnalyzeTarget(
+                    station,
+                    aircraft,
+                    tracking,
+                    0f,
+                    range,
+                    maxRangeMultiplier: 100f);
                 float score = assessment.GetCombinedScore() / range;
                 float requiredAccuracy = mission.Mode == AirCommandMode.AwacsJammer ? 100f : 1000f;
                 if (score <= bestScore || !hq.IsTargetPositionAccurate(target, requiredAccuracy))
@@ -796,11 +847,21 @@ internal sealed partial class CommanderAirCommandService
     private void CompleteAreaSelection(GlobalPosition target)
     {
         PendingAreaSelection? selection = pendingAreaSelection;
+        Aircraft? relocationAircraft = pendingMissionRelocation;
         pendingAreaSelection = null;
+        pendingMissionRelocation = null;
         DestroyPendingAreaPreview();
         tacticalMapService.SuppressMapFollow = false;
         mapClickTracker.Reset();
         if (!uiVisible) tacticalMapService.CloseFullscreen();
+        if (relocationAircraft != null && missions.TryGetValue(relocationAircraft, out AirMission relocationMission))
+        {
+            relocationMission.AreaCenter = target;
+            DestroyMissionMapVisual(relocationMission);
+            EnsureMissionMapVisual(relocationMission);
+            SetStatus($"{GetModeLabel(relocationMission.Mode)} mission area relocated.");
+            return;
+        }
         if (selection == null)
         {
             return;
@@ -811,12 +872,13 @@ internal sealed partial class CommanderAirCommandService
 
     private void CancelAreaSelection(bool showStatus)
     {
-        if (pendingAreaSelection == null)
+        if (pendingAreaSelection == null && pendingMissionRelocation == null)
         {
             return;
         }
 
         pendingAreaSelection = null;
+        pendingMissionRelocation = null;
         DestroyPendingAreaPreview();
         tacticalMapService.SuppressMapFollow = false;
         mapClickTracker.Reset();
@@ -1353,6 +1415,13 @@ internal sealed partial class CommanderAirCommandService
         return mode == AirCommandMode.AwacsJammer || mode == AirCommandMode.AirGuard;
     }
 
+    private static bool TargetsRestrictedToMissionArea(AirCommandMode mode)
+    {
+        return mode == AirCommandMode.Cas
+            || mode == AirCommandMode.Arad
+            || mode == AirCommandMode.StrategicStrike;
+    }
+
     internal static string GetModeLabel(AirCommandMode mode)
     {
         return mode switch
@@ -1541,8 +1610,8 @@ internal sealed partial class CommanderAirCommandService
         }
 
         internal AirCommandMode Mode { get; }
-        internal GlobalPosition AreaCenter { get; }
-        internal float Radius { get; }
+        internal GlobalPosition AreaCenter { get; set; }
+        internal float Radius { get; set; }
         internal float TargetAltitude { get; }
         internal bool TargetOrdnance { get; }
         internal bool SaturationAttack { get; }
