@@ -13,6 +13,7 @@ internal sealed class CommanderInputController
     private readonly CommanderSupplyHeliService supplyHeliService;
     private readonly CommanderMobileEmplacementService mobileEmplacementService;
     private readonly CommanderAirCommandService airCommandService;
+    private CommanderPovCrewUi? povCrewUi;
 
     internal CommanderInputController(
         CommanderOverlayUi overlayUi,
@@ -36,6 +37,11 @@ internal sealed class CommanderInputController
         this.airCommandService = airCommandService;
     }
 
+    internal void SetPovCrewUi(CommanderPovCrewUi ui)
+    {
+        povCrewUi = ui;
+    }
+
     internal void Tick()
     {
         if (CommanderNavalPurchaseService.Instance?.AwaitingRallySelection == true)
@@ -49,6 +55,10 @@ internal sealed class CommanderInputController
         }
 
         Vector2 mousePosition = Input.mousePosition;
+        if (povCrewUi?.ContainsScreenPoint(mousePosition) == true)
+        {
+            return;
+        }
         if (tacticalMapService.ContainsScreenPoint(mousePosition))
         {
             return;
@@ -60,12 +70,12 @@ internal sealed class CommanderInputController
             return;
         }
 
-        if (CommanderSettings.PrimaryAction.IsDown())
+        if (CommanderShortcutInput.IsDown(CommanderSettings.PrimaryAction))
         {
             HandlePrimaryClick(mousePosition);
         }
 
-        if (CommanderSettings.SecondaryAction.IsDown())
+        if (CommanderShortcutInput.IsDown(CommanderSettings.SecondaryAction))
         {
             HandleSecondaryClick(mousePosition);
         }

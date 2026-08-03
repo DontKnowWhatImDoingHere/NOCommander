@@ -19,6 +19,9 @@ internal sealed class CommanderSamSiteAnalyzerService
     private const float ForwardCoverageHalfAngle = 22.5f;
     private const float RequiredRoadDistance = 500f;
     private const float RadarHeight = 5f;
+    private const int CoverageOverlayResolution = 192;
+    private const int CoverageHorizonDirectionCount = 720;
+    private const float CoverageHorizonSampleSpacing = 100f;
     private const int SuggestedSiteCount = 12;
     private const float CandidateSeparation = 500f;
     private const float StartupDelaySeconds = 8f;
@@ -55,10 +58,17 @@ internal sealed class CommanderSamSiteAnalyzerService
     private Vector2 coverageEnemyDirection;
     private bool coverageEnemyDirectionReady;
     private Color32[]? coverageOverlayPixels;
+    private float[]? coverageRequiredAltitudes;
+    private byte[]? coverageOverlayAlpha;
+    private float[]? coverageHorizonSlopes;
+    private float[]? coverageHorizonProfile;
     private SiteCandidate coverageOverlayCandidate;
     private int coverageOverlayPixelIndex;
+    private int coverageHorizonSampleIndex;
     private bool coverageOverlayBuilding;
     private Unit? coverageOverlaySource;
+    private float coverageEmitterHeight;
+    private float coverageTargetAltitude = LowAltitudeClearance;
     private bool uiVisible;
     private bool localRefinementActive;
     private int activeCandidateId = -1;
@@ -119,9 +129,11 @@ internal sealed class CommanderSamSiteAnalyzerService
     internal float CoverageOverlayProgress => CoverageOverlayTexture == null
         ? 0f
         : coverageOverlayBuilding
-            ? (float)coverageOverlayPixelIndex / CoverageOverlayTexture.width / CoverageOverlayTexture.height
+            ? (float)(coverageHorizonSampleIndex + coverageOverlayPixelIndex)
+                / (CoverageHorizonSampleCount + CoverageOverlayTexture.width * CoverageOverlayTexture.height)
             : 1f;
     internal GlobalPosition CoverageOverlayOrigin => coverageOverlayCandidate.Position;
+    internal float CoverageTargetAltitude => coverageTargetAltitude;
     internal int ScanQueriesPerFrame => Mathf.Clamp(CommanderSettings.SamScanQueriesPerFrame, 16, 1024);
 
     internal static bool TryGetStrategicTerrainHeight(float globalX, float globalZ, out float height)
@@ -526,18 +538,52 @@ internal sealed class CommanderSamSiteAnalyzerService
         }
 
         CoverageOverlayEnabled = true;
+        GlobalPosition emitterPosition = ResolveRadarEmitterPosition(source, position);
         SiteCandidate candidate = new(
-            position,
-            position.y,
+            emitterPosition,
+            emitterPosition.y,
             0f,
             0f,
             0f,
             0f,
             0f);
-        BeginCoverageOverlay(candidate);
+        BeginCoverageOverlay(candidate, emitterPosition.y);
         coverageOverlaySource = source;
         statusText = "Generating radar coverage.";
         return true;
+    }
+
+    internal void SetCoverageTargetAltitude(float altitude)
+    {
+        float snapped = Mathf.Clamp(Mathf.Round(altitude / 25f) * 25f, 0f, 2000f);
+        if (Mathf.Approximately(coverageTargetAltitude, snapped))
+        {
+            return;
+        }
+
+        coverageTargetAltitude = snapped;
+        if (CoverageOverlayReady)
+        {
+            RecolorCoverageOverlay();
+        }
+    }
+
+    private static GlobalPosition ResolveRadarEmitterPosition(Unit source, GlobalPosition fallback)
+    {
+        Radar[] radars = source.GetComponentsInChildren<Radar>(includeInactive: true);
+        Transform? highestScanner = null;
+        for (int i = 0; i < radars.Length; i++)
+        {
+            Transform scanner = radars[i].GetScanPoint();
+            if (scanner != null && (highestScanner == null || scanner.position.y > highestScanner.position.y))
+            {
+                highestScanner = scanner;
+            }
+        }
+
+        return highestScanner != null
+            ? highestScanner.GlobalPosition()
+            : new GlobalPosition(fallback.x, fallback.y + RadarHeight, fallback.z);
     }
 
     internal bool CoverageMatches(Unit source)
@@ -984,26 +1030,10 @@ internal sealed class CommanderSamSiteAnalyzerService
         return Mathf.Lerp(1f, 0.2f, Mathf.InverseLerp(20000f, CoverageRange, distance));
     }
 
-    private static bool HasPhysicsLineOfSight(SiteCandidate candidate, GlobalPosition target)
-    {
-        if (HorizontalSquareDistance(candidate.Position, target) > CoverageRange * CoverageRange)
-        {
-            return false;
-        }
+    private static int CoverageHorizonDistanceSteps => Mathf.CeilToInt(CoverageRange / CoverageHorizonSampleSpacing);
+    private static int CoverageHorizonSampleCount => CoverageHorizonDirectionCount * CoverageHorizonDistanceSteps;
 
-        Vector3 sourcePosition = new GlobalPosition(
-            candidate.Position.x,
-            candidate.Height + RadarHeight,
-            candidate.Position.z).ToLocalPosition();
-        Vector3 targetPosition = target.ToLocalPosition();
-        return !Physics.Linecast(
-            sourcePosition,
-            targetPosition,
-            PhysicsLayers.StaticsMask,
-            QueryTriggerInteraction.Ignore);
-    }
-
-    private void BeginCoverageOverlay(SiteCandidate candidate)
+    private void BeginCoverageOverlay(SiteCandidate candidate, float? emitterHeight = null)
     {
         ClearCoverageOverlay();
         if (!strategicHeightMap.IsReady)
@@ -1011,19 +1041,32 @@ internal sealed class CommanderSamSiteAnalyzerService
             return;
         }
 
-        const int resolution = 192;
-        Texture2D texture = new(resolution, resolution, TextureFormat.RGBA32, false)
+        Texture2D texture = new(CoverageOverlayResolution, CoverageOverlayResolution, TextureFormat.RGBA32, false)
         {
             name = "NOCommander_SamCoverage",
             filterMode = FilterMode.Bilinear,
             wrapMode = TextureWrapMode.Clamp
         };
         CoverageOverlayTexture = texture;
-        coverageOverlayPixels = new Color32[resolution * resolution];
+        coverageOverlayPixels = new Color32[CoverageOverlayResolution * CoverageOverlayResolution];
+        coverageRequiredAltitudes = new float[coverageOverlayPixels.Length];
+        coverageOverlayAlpha = new byte[coverageOverlayPixels.Length];
+        for (int i = 0; i < coverageRequiredAltitudes.Length; i++)
+        {
+            coverageRequiredAltitudes[i] = float.PositiveInfinity;
+        }
+        coverageHorizonSlopes = new float[CoverageHorizonDirectionCount];
+        for (int i = 0; i < coverageHorizonSlopes.Length; i++)
+        {
+            coverageHorizonSlopes[i] = float.NegativeInfinity;
+        }
+        coverageHorizonProfile = new float[CoverageHorizonDirectionCount * (CoverageHorizonDistanceSteps + 1)];
         texture.SetPixels32(coverageOverlayPixels);
         texture.Apply(false, false);
         coverageOverlayCandidate = candidate;
+        coverageEmitterHeight = emitterHeight ?? candidate.Height + RadarHeight;
         coverageOverlayPixelIndex = 0;
+        coverageHorizonSampleIndex = 0;
         coverageOverlayBuilding = true;
     }
 
@@ -1032,15 +1075,45 @@ internal sealed class CommanderSamSiteAnalyzerService
         if (!CoverageOverlayEnabled
             || !coverageOverlayBuilding
             || CoverageOverlayTexture == null
-            || coverageOverlayPixels == null)
+            || coverageOverlayPixels == null
+            || coverageRequiredAltitudes == null
+            || coverageOverlayAlpha == null
+            || coverageHorizonSlopes == null
+            || coverageHorizonProfile == null)
+        {
+            return;
+        }
+
+        int baseBatchSize = Mathf.Clamp(ScanQueriesPerFrame, 64, 512);
+        int horizonEnd = Mathf.Min(
+            coverageHorizonSampleIndex + baseBatchSize * 24,
+            CoverageHorizonSampleCount);
+        for (; coverageHorizonSampleIndex < horizonEnd; coverageHorizonSampleIndex++)
+        {
+            int directionIndex = coverageHorizonSampleIndex / CoverageHorizonDistanceSteps;
+            int distanceIndex = coverageHorizonSampleIndex % CoverageHorizonDistanceSteps + 1;
+            float distance = distanceIndex * CoverageHorizonSampleSpacing;
+            float angle = directionIndex * Mathf.PI * 2f / CoverageHorizonDirectionCount;
+            float x = coverageOverlayCandidate.Position.x + Mathf.Cos(angle) * distance;
+            float z = coverageOverlayCandidate.Position.z + Mathf.Sin(angle) * distance;
+            if (strategicHeightMap.TryGetHeight(x, z, out float terrainHeight))
+            {
+                float slope = (terrainHeight - coverageEmitterHeight) / distance;
+                coverageHorizonSlopes[directionIndex] = Mathf.Max(coverageHorizonSlopes[directionIndex], slope);
+            }
+            coverageHorizonProfile[
+                directionIndex * (CoverageHorizonDistanceSteps + 1) + distanceIndex] =
+                coverageHorizonSlopes[directionIndex];
+        }
+
+        if (coverageHorizonSampleIndex < CoverageHorizonSampleCount)
         {
             return;
         }
 
         int resolution = CoverageOverlayTexture.width;
-        int baseBatchSize = Mathf.Clamp(ScanQueriesPerFrame, 64, 512);
         int end = Mathf.Min(
-            coverageOverlayPixelIndex + baseBatchSize * 6,
+            coverageOverlayPixelIndex + baseBatchSize * 24,
             coverageOverlayPixels.Length);
         for (; coverageOverlayPixelIndex < end; coverageOverlayPixelIndex++)
         {
@@ -1059,15 +1132,46 @@ internal sealed class CommanderSamSiteAnalyzerService
                 continue;
             }
             GlobalPosition target = new(globalX, terrainHeight + LowAltitudeClearance, z);
-            if (!HasPhysicsLineOfSight(coverageOverlayCandidate, target))
+            float distance = Mathf.Sqrt(HorizontalSquareDistance(coverageOverlayCandidate.Position, target));
+            if (distance > CoverageRange)
             {
                 continue;
             }
 
-            float distance = Mathf.Sqrt(HorizontalSquareDistance(coverageOverlayCandidate.Position, target));
+            float requiredAltitude = 0f;
+            if (distance >= CoverageHorizonSampleSpacing)
+            {
+                float angle = Mathf.Atan2(
+                    z - coverageOverlayCandidate.Position.z,
+                    globalX - coverageOverlayCandidate.Position.x);
+                if (angle < 0f)
+                {
+                    angle += Mathf.PI * 2f;
+                }
+                int directionIndex = Mathf.Clamp(
+                    Mathf.FloorToInt(angle / (Mathf.PI * 2f) * CoverageHorizonDirectionCount),
+                    0,
+                    CoverageHorizonDirectionCount - 1);
+                int distanceIndex = Mathf.Clamp(
+                    Mathf.FloorToInt(distance / CoverageHorizonSampleSpacing),
+                    1,
+                    CoverageHorizonDistanceSteps);
+                float horizonSlope = coverageHorizonProfile[
+                    directionIndex * (CoverageHorizonDistanceSteps + 1) + distanceIndex];
+                if (!float.IsNegativeInfinity(horizonSlope))
+                {
+                    requiredAltitude = Mathf.Max(
+                        0f,
+                        coverageEmitterHeight + horizonSlope * distance - terrainHeight);
+                }
+            }
+            coverageRequiredAltitudes[coverageOverlayPixelIndex] = requiredAltitude;
             float weight = CalculateStrategicWeight(target) * CalculateEngagementRangeValue(distance);
-            byte alpha = (byte)Mathf.RoundToInt(Mathf.Lerp(38f, 112f, weight));
-            coverageOverlayPixels[coverageOverlayPixelIndex] = new Color32(34, 174, 230, alpha);
+            coverageOverlayAlpha[coverageOverlayPixelIndex] =
+                (byte)Mathf.RoundToInt(Mathf.Lerp(38f, 112f, weight));
+            coverageOverlayPixels[coverageOverlayPixelIndex] = requiredAltitude <= coverageTargetAltitude
+                ? new Color32(34, 174, 230, coverageOverlayAlpha[coverageOverlayPixelIndex])
+                : default;
         }
 
         if (coverageOverlayPixelIndex < coverageOverlayPixels.Length)
@@ -1076,9 +1180,30 @@ internal sealed class CommanderSamSiteAnalyzerService
         }
 
         CoverageOverlayTexture.SetPixels32(coverageOverlayPixels);
-        CoverageOverlayTexture.Apply(false, true);
-        coverageOverlayPixels = null;
+        CoverageOverlayTexture.Apply(false, false);
+        coverageHorizonSlopes = null;
+        coverageHorizonProfile = null;
         coverageOverlayBuilding = false;
+    }
+
+    private void RecolorCoverageOverlay()
+    {
+        if (CoverageOverlayTexture == null
+            || coverageOverlayPixels == null
+            || coverageRequiredAltitudes == null
+            || coverageOverlayAlpha == null)
+        {
+            return;
+        }
+
+        for (int i = 0; i < coverageOverlayPixels.Length; i++)
+        {
+            coverageOverlayPixels[i] = coverageRequiredAltitudes[i] <= coverageTargetAltitude
+                ? new Color32(34, 174, 230, coverageOverlayAlpha[i])
+                : default;
+        }
+        CoverageOverlayTexture.SetPixels32(coverageOverlayPixels);
+        CoverageOverlayTexture.Apply(false, false);
     }
 
     private void ClearCoverageOverlay()
@@ -1089,7 +1214,12 @@ internal sealed class CommanderSamSiteAnalyzerService
             CoverageOverlayTexture = null;
         }
         coverageOverlayPixels = null;
+        coverageRequiredAltitudes = null;
+        coverageOverlayAlpha = null;
+        coverageHorizonSlopes = null;
+        coverageHorizonProfile = null;
         coverageOverlayPixelIndex = 0;
+        coverageHorizonSampleIndex = 0;
         coverageOverlayBuilding = false;
         coverageOverlaySource = null;
     }

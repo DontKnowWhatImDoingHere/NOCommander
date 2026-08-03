@@ -251,9 +251,9 @@ internal sealed class CommanderTacticalMapService
 
         Rect header = new(mapWindowRect.x, mapWindowRect.y, mapWindowRect.width, HeaderHeight);
         GUI.Box(header, string.Empty, CommanderUiTheme.Panel);
-        GUI.Label(new Rect(header.x + 10f, header.y + 3f, 32f, 24f), "MAP", CommanderUiTheme.Header);
+        GUI.Label(new Rect(header.x + 10f, header.y + 3f, 42f, 24f), "MAP", CommanderUiTheme.Header);
         bool oldEnabled = GUI.enabled;
-        Rect cameraGroup = new(header.x + 42f, header.y + 2f, 514f, 26f);
+        Rect cameraGroup = new(header.xMax - 452f, header.y + 2f, 384f, 26f);
         CommanderUiTheme.DrawFrame(cameraGroup, 1f);
         GUI.Label(new Rect(cameraGroup.x + 4f, cameraGroup.y + 1f, 38f, 24f), "CAM", CommanderUiTheme.MutedLabel);
         GUI.enabled = oldEnabled && cameraFollowService.CanFollow;
@@ -263,17 +263,11 @@ internal sealed class CommanderTacticalMapService
         {
             cameraFollowService.Toggle();
         }
-        if (GUI.Button(new Rect(cameraGroup.x + 150f, cameraGroup.y + 2f, 96f, 22f), "CENTER", CommanderUiTheme.Button))
+        if (GUI.Button(new Rect(cameraGroup.x + 150f, cameraGroup.y + 2f, 104f, 22f), "CENTER", CommanderUiTheme.Button))
         {
             cameraFollowService.CenterOnSelection();
         }
-        if (GUI.Button(new Rect(cameraGroup.x + 250f, cameraGroup.y + 2f, 126f, 22f),
-            cameraFollowService.FollowRotation ? "FOLLOW ROT ON" : "FOLLOW ROT",
-            cameraFollowService.FollowRotation ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
-        {
-            cameraFollowService.ToggleRotation();
-        }
-        if (GUI.Button(new Rect(cameraGroup.x + 380f, cameraGroup.y + 2f, 128f, 22f),
+        if (GUI.Button(new Rect(cameraGroup.x + 258f, cameraGroup.y + 2f, 104f, 22f),
             cameraFollowService.PovMode ? "POV ON" : "POV",
             cameraFollowService.PovMode ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
         {
@@ -296,7 +290,7 @@ internal sealed class CommanderTacticalMapService
         {
             CommanderUiTheme.DrawHelpOverlay(
                 new Rect(mapRect.x + 10f, mapRect.y + 10f, mapRect.width - 20f, 82f),
-                "LMB selects map icons or moves the free camera when terrain is empty; RMB issues Basegame orders. FOLLOW tracks position, CENTER jumps once, FOLLOW ROT tracks orientation, and POV provides a movable view attached to the unit. M opens the fullscreen map and restores this map when closed. Radar coverage is generated from Unit Systems.");
+                "LMB selects map icons or moves the free camera when terrain is empty; RMB issues Basegame orders. FOLLOW tracks position, CENTER jumps once, and POV provides a movable view attached to the unit. M opens the fullscreen map and restores this map when closed. Radar coverage is generated from Unit Systems.");
         }
 
         HandleDrag(new Rect(header.x, header.y, header.width - 66f, header.height));

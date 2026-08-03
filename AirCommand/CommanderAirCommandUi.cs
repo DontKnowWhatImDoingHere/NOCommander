@@ -160,7 +160,7 @@ internal sealed class CommanderAirCommandUi
         {
             CommanderUiTheme.DrawHelpOverlay(
                 new Rect(12f, y, windowRect.width - 24f, 86f),
-                "Select a mission, loadout and airbase, then place its area on the fullscreen map. PRIMARY FIRST fills compatible stations before using the secondary weapon; MIX reserves roughly 25% for secondary. Hover a mission for role details. Active aircraft and RTB are listed on the right.");
+                "Select a mission and loadout, then choose a departure airbase from the list or directly on the map. Only airbases that can currently spawn the aircraft are shown. Place the mission area on the fullscreen map. Active aircraft and RTB are listed on the right.");
             y += 94f;
         }
 

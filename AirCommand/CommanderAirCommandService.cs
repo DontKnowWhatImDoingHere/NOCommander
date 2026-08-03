@@ -80,6 +80,7 @@ internal sealed partial class CommanderAirCommandService
             ? relocationMission.Radius
             : 0f;
     internal int ActiveMissionCount => missions.Count;
+    internal bool IsUiVisible => uiVisible;
     internal bool CanLaunchSelected => SelectedOption != null
         && SelectedPrimaryWeapon != null
         && GetPrimaryWeaponCount(SelectedOption) > 0
@@ -157,8 +158,17 @@ internal sealed partial class CommanderAirCommandService
     {
         if (pendingAircraftSpawn != null && Time.unscaledTime > pendingAircraftSpawn.ExpiresAt)
         {
-            SetStatus($"Aircraft assignment timed out for {GetAircraftLabel(pendingAircraftSpawn.Option.Definition)}.");
+            PendingAircraftSpawn timedOutSpawn = pendingAircraftSpawn;
             pendingAircraftSpawn = null;
+            if (timedOutSpawn.PurchasedWithFunds)
+            {
+                timedOutSpawn.Hq.AddFunds(timedOutSpawn.PurchaseCost);
+            }
+            else
+            {
+                timedOutSpawn.Hq.ModifyUnitSupply(timedOutSpawn.Option.Definition, 1);
+            }
+            SetStatus($"Aircraft spawn timed out for {GetAircraftLabel(timedOutSpawn.Option.Definition)}; cost restored.");
         }
 
         if (CommanderScheduler.IsDue(ref nextMissionPruneAt, MissionPruneIntervalSeconds))
@@ -248,6 +258,51 @@ internal sealed partial class CommanderAirCommandService
         {
             selectedAirbaseIndex = index;
         }
+    }
+
+    internal bool TrySelectAirbaseFromMap(Airbase? airbase)
+    {
+        if (!uiVisible || airbase == null)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < airbases.Count; i++)
+        {
+            if (ReferenceEquals(airbases[i].Airbase, airbase))
+            {
+                selectedAirbaseIndex = i;
+                SetStatus($"Departure airbase selected: {airbases[i].Label}.");
+                return true;
+            }
+        }
+
+        SetStatus("This airbase cannot currently spawn the selected aircraft.");
+        return false;
+    }
+
+    internal bool IsSelectableAirbase(Airbase? airbase)
+    {
+        if (!uiVisible || airbase == null)
+        {
+            return false;
+        }
+
+        for (int i = 0; i < airbases.Count; i++)
+        {
+            if (ReferenceEquals(airbases[i].Airbase, airbase))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    internal bool IsSelectedAirbase(Airbase? airbase)
+    {
+        return airbase != null
+            && SelectedAirbase is AirbaseOption selected
+            && ReferenceEquals(selected.Airbase, airbase);
     }
 
     internal float SelectedMissionRadiusKm => GetMissionRadius(selectedMode) / 1000f;
@@ -424,7 +479,7 @@ internal sealed partial class CommanderAirCommandService
 
     internal static void NotifyAircraftReturned(Aircraft aircraft)
     {
-        Instance?.RemoveMission(aircraft);
+        Instance?.HandleAircraftReturned(aircraft);
     }
 
     internal static void NotifyUnitDisabled(Unit unit)
@@ -460,6 +515,20 @@ internal sealed partial class CommanderAirCommandService
             mission.Returning = true;
         }
         return true;
+    }
+
+    private void HandleAircraftReturned(Aircraft aircraft)
+    {
+        if (missions.TryGetValue(aircraft, out AirMission mission)
+            && mission.PurchasedWithFunds)
+        {
+            // Basegame ReturnToInventory has just restored one airframe. Convert
+            // that temporary purchased airframe back into its original funds.
+            mission.Hq.ModifyUnitSupply(aircraft.definition, -1);
+            mission.Hq.AddFunds(mission.PurchaseCost);
+        }
+
+        RemoveMission(aircraft);
     }
 
     internal static bool TryBuildAradSaturationTargets(
@@ -801,7 +870,8 @@ internal sealed partial class CommanderAirCommandService
         Vector3 cameraPosition = camera != null ? camera.transform.position : Vector3.zero;
         foreach (Airbase airbase in hq.GetAirbases())
         {
-            if (!IsCompatibleAirbase(airbase, hq, option.Definition))
+            if (!IsCompatibleAirbase(airbase, hq, option.Definition)
+                || !airbase.CanSpawnAircraft(option.Definition))
             {
                 continue;
             }
@@ -811,7 +881,7 @@ internal sealed partial class CommanderAirCommandService
                 airbase,
                 GetAirbaseName(airbase),
                 Vector3.Distance(cameraPosition, position.position),
-                airbase.CanSpawnAircraft(option.Definition)));
+                ready: true));
         }
 
         airbases.Sort(static (left, right) => left.Distance.CompareTo(right.Distance));
@@ -941,6 +1011,8 @@ internal sealed partial class CommanderAirCommandService
             SupportsTargetAltitude(option.Mode) ? selectedTargetAltitude : 0f,
             option.Mode == AirCommandMode.AirGuard && TargetOrdnance,
             option.Mode == AirCommandMode.Arad && SaturationAttack,
+            purchased,
+            purchased ? option.Definition.value : 0f,
             Time.unscaledTime + PendingSpawnTimeoutSeconds);
 
         int liveryIndex = option.Definition.aircraftParameters.GetRandomLiveryForFaction(hq.faction);
@@ -991,12 +1063,15 @@ internal sealed partial class CommanderAirCommandService
         }
 
         AirMission mission = new(
+            pending.Hq,
             pending.Option.Mode,
             pending.AreaCenter,
             pending.Radius,
             pending.TargetAltitude,
             pending.TargetOrdnance,
-            pending.SaturationAttack);
+            pending.SaturationAttack,
+            pending.PurchasedWithFunds,
+            pending.PurchaseCost);
         missions[aircraft] = mission;
         CommanderSelectionService.PinMissionUnit(
             aircraft,
@@ -1575,7 +1650,7 @@ internal sealed partial class CommanderAirCommandService
 
     private sealed class PendingAircraftSpawn
     {
-        internal PendingAircraftSpawn(FactionHQ hq, AirMissionOption option, GlobalPosition areaCenter, float radius, float targetAltitude, bool targetOrdnance, bool saturationAttack, float expiresAt)
+        internal PendingAircraftSpawn(FactionHQ hq, AirMissionOption option, GlobalPosition areaCenter, float radius, float targetAltitude, bool targetOrdnance, bool saturationAttack, bool purchasedWithFunds, float purchaseCost, float expiresAt)
         {
             Hq = hq;
             Option = option;
@@ -1584,6 +1659,8 @@ internal sealed partial class CommanderAirCommandService
             TargetAltitude = targetAltitude;
             TargetOrdnance = targetOrdnance;
             SaturationAttack = saturationAttack;
+            PurchasedWithFunds = purchasedWithFunds;
+            PurchaseCost = purchaseCost;
             ExpiresAt = expiresAt;
         }
 
@@ -1594,27 +1671,35 @@ internal sealed partial class CommanderAirCommandService
         internal float TargetAltitude { get; }
         internal bool TargetOrdnance { get; }
         internal bool SaturationAttack { get; }
+        internal bool PurchasedWithFunds { get; }
+        internal float PurchaseCost { get; }
         internal float ExpiresAt { get; }
     }
 
     private sealed class AirMission
     {
-        internal AirMission(AirCommandMode mode, GlobalPosition areaCenter, float radius, float targetAltitude, bool targetOrdnance, bool saturationAttack)
+        internal AirMission(FactionHQ hq, AirCommandMode mode, GlobalPosition areaCenter, float radius, float targetAltitude, bool targetOrdnance, bool saturationAttack, bool purchasedWithFunds, float purchaseCost)
         {
+            Hq = hq;
             Mode = mode;
             AreaCenter = areaCenter;
             Radius = radius;
             TargetAltitude = targetAltitude;
             TargetOrdnance = targetOrdnance;
             SaturationAttack = saturationAttack;
+            PurchasedWithFunds = purchasedWithFunds;
+            PurchaseCost = purchaseCost;
         }
 
+        internal FactionHQ Hq { get; }
         internal AirCommandMode Mode { get; }
         internal GlobalPosition AreaCenter { get; set; }
         internal float Radius { get; set; }
         internal float TargetAltitude { get; }
         internal bool TargetOrdnance { get; }
         internal bool SaturationAttack { get; }
+        internal bool PurchasedWithFunds { get; }
+        internal float PurchaseCost { get; }
         internal GameObject? MapVisual { get; set; }
         internal bool Returning { get; set; }
         internal bool RtbIssued { get; set; }

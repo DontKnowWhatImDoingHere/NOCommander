@@ -10,6 +10,7 @@ internal sealed class CommanderModeController : MonoBehaviour
     private CommanderSelectionService? selectionService;
     private CommanderFactionVehicleService? factionVehicleService;
     private CommanderCameraFollowService? cameraFollowService;
+    private CommanderPovCrewUi? povCrewUi;
     private CommanderTacticalMapService? tacticalMapService;
     private CommanderRadarService? radarService;
     private CommanderMobileEmplacementService? mobileEmplacementService;
@@ -38,6 +39,7 @@ internal sealed class CommanderModeController : MonoBehaviour
         cursorController = new CommanderCursorController();
         selectionService = new CommanderSelectionService();
         cameraFollowService = new CommanderCameraFollowService(selectionService);
+        povCrewUi = new CommanderPovCrewUi(cameraFollowService);
         factionVehicleService = new CommanderFactionVehicleService();
         tacticalMapService = new CommanderTacticalMapService(cameraFollowService);
         radarService = new CommanderRadarService(selectionService);
@@ -74,6 +76,7 @@ internal sealed class CommanderModeController : MonoBehaviour
             navalPurchaseService,
             samSiteAnalyzerService,
             samSiteService,
+            UnlockAdvancedFeatures,
             () => Deactivate());
         inputController = new CommanderInputController(
             overlayUi,
@@ -85,19 +88,23 @@ internal sealed class CommanderModeController : MonoBehaviour
             supplyHeliService,
             mobileEmplacementService,
             airCommandService);
+        inputController.SetPovCrewUi(povCrewUi);
         SceneManager.activeSceneChanged += OnActiveSceneChanged;
     }
 
     private void Update()
     {
         CommanderUiScale.RefreshResolutionPreset();
-        persistentOperations?.Tick();
+        if (CommanderFeatureGate.AdvancedFeaturesEnabled)
+        {
+            persistentOperations?.Tick();
+        }
         if (!IsActive)
         {
             return;
         }
 
-        if (CommanderSettings.ToggleUi.IsDown())
+        if (CommanderShortcutInput.IsDown(CommanderSettings.ToggleUi))
         {
             overlayUi?.ToggleScreenshotUi();
         }
@@ -114,15 +121,26 @@ internal sealed class CommanderModeController : MonoBehaviour
         moveService?.Tick();
         markerService?.Tick();
         tacticalMapService?.Tick();
-        radarService?.Tick();
-        mobileEmplacementService?.TickActive();
-        supplyHeliService?.TickActive();
-        airCommandService?.TickActive();
-        navalPurchaseService?.TickActive();
-        samSiteAnalyzerService?.TickActive();
-        spawnService?.TickActive();
+        if (CommanderFeatureGate.AdvancedFeaturesEnabled)
+        {
+            radarService?.Tick();
+            mobileEmplacementService?.TickActive();
+            supplyHeliService?.TickActive();
+            airCommandService?.TickActive();
+            navalPurchaseService?.TickActive();
+            samSiteAnalyzerService?.TickActive();
+            spawnService?.TickActive();
+        }
         overlayUi?.Tick();
         inputController?.Tick();
+    }
+
+    private void FixedUpdate()
+    {
+        if (IsActive)
+        {
+            cameraFollowService?.FixedTick();
+        }
     }
 
     private void OnGUI()
@@ -140,6 +158,10 @@ internal sealed class CommanderModeController : MonoBehaviour
             }
 
             overlayUi?.Draw();
+            if (overlayUi?.CommanderUiHidden != true)
+            {
+                povCrewUi?.Draw();
+            }
             if (overlayUi?.ShowTacticalMapUi == true)
             {
                 tacticalMapService?.DrawControls();
@@ -224,10 +246,47 @@ internal sealed class CommanderModeController : MonoBehaviour
             return;
         }
 
+        CommanderFeatureGate.RefreshMission();
         cursorController?.Activate();
         IsActive = true;
         selectionService?.Activate();
         markerService?.Activate();
+        if (CommanderFeatureGate.AdvancedFeaturesEnabled)
+        {
+            ActivateAdvancedServices();
+        }
+        overlayUi?.Activate();
+        if (CommanderFeatureGate.AdvancedFeaturesEnabled
+            && overlayUi?.ShowTacticalMapUi == true)
+        {
+            tacticalMapService?.Open();
+        }
+        CommanderPlugin.Log.LogInfo(
+            $"Commander mode enabled: mission={CommanderFeatureGate.MissionName}, features={(CommanderFeatureGate.AdvancedFeaturesEnabled ? "full" : "core")}.");
+    }
+
+    private void UnlockAdvancedFeatures()
+    {
+        if (CommanderFeatureGate.AdvancedFeaturesEnabled)
+        {
+            return;
+        }
+
+        CommanderFeatureGate.UnlockAdvancedFeatures();
+        if (IsActive)
+        {
+            ActivateAdvancedServices();
+            if (overlayUi?.ShowTacticalMapUi == true)
+            {
+                tacticalMapService?.Open();
+            }
+        }
+        CommanderPlugin.Log.LogWarning(
+            $"Advanced Commander features manually unlocked for mission '{CommanderFeatureGate.MissionName}'.");
+    }
+
+    private void ActivateAdvancedServices()
+    {
         radarService?.Activate();
         mobileEmplacementService?.Activate();
         supplyHeliService?.Activate();
@@ -235,16 +294,6 @@ internal sealed class CommanderModeController : MonoBehaviour
         navalPurchaseService?.Activate();
         samSiteAnalyzerService?.Activate();
         spawnService?.Activate();
-        overlayUi?.Activate();
-        if (!string.IsNullOrEmpty(cameraController.MissingBindingWarning))
-        {
-            overlayUi?.ShowCameraBindingWarning(cameraController.MissingBindingWarning);
-        }
-        if (overlayUi?.ShowTacticalMapUi == true)
-        {
-            tacticalMapService?.Open();
-        }
-        CommanderPlugin.Log.LogInfo("Commander mode enabled.");
     }
 
     private void Deactivate(bool restorePreviousCamera = true)
@@ -283,6 +332,7 @@ internal sealed class CommanderModeController : MonoBehaviour
     private void OnActiveSceneChanged(Scene previousScene, Scene newScene)
     {
         Deactivate(restorePreviousCamera: false);
+        CommanderFeatureGate.ResetSession();
         selectionService?.ResetSession();
         cameraFollowService?.Disable();
         tacticalMapService?.ResetSession();

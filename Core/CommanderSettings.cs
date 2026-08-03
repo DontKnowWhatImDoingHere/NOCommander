@@ -10,7 +10,8 @@ internal static class CommanderSettings
     private static readonly Dictionary<string, ConfigEntryBase> entries = new();
 
     internal static float UiScale { get; set; } = 1.5f;
-    internal static bool LimitVehiclesToOwnSide { get => Get("Gameplay", "LimitVehiclesToOwnSide", false); set => Set("Gameplay", "LimitVehiclesToOwnSide", value); }
+    internal static bool ModEnabled { get => Get("General", "Enabled", true); set => Set("General", "Enabled", value); }
+    internal static bool LimitToFactoryVehicles { get => Get("Gameplay", "LimitToFactoryVehicles", false); set => Set("Gameplay", "LimitToFactoryVehicles", value); }
     internal static bool ShowCommandButton { get => Get("UI", "ShowCommandButton", true); set => Set("UI", "ShowCommandButton", value); }
     internal static bool ShowFactionMoney { get => Get("UI", "ShowFactionMoney", true); set => Set("UI", "ShowFactionMoney", value); }
     internal static bool ShowTacticalMap { get => Get("UI", "ShowTacticalMap", true); set => Set("UI", "ShowTacticalMap", value); }
@@ -32,6 +33,14 @@ internal static class CommanderSettings
     internal static KeyboardShortcut DeleteUnitModifier { get => GetShortcut("DeleteUnitModifier", KeyCode.LeftAlt, "Hold to turn PIN into DEL."); set => Set("Keybinds", "DeleteUnitModifier", value); }
     internal static KeyboardShortcut CameraCenterFollow { get => GetShortcut("CameraCenterFollow", KeyCode.Space, "Tap to center; hold to center and follow."); set => Set("Keybinds", "CameraCenterFollow", value); }
     internal static KeyboardShortcut ToggleUi { get => GetShortcut("ToggleUi", KeyCode.H, "Cycle visible, Commander UI hidden, and all UI hidden."); set => Set("Keybinds", "ToggleUi", value); }
+    internal static KeyboardShortcut CameraForward { get => GetShortcut("CameraForward", KeyCode.W, "Move the Commander camera forward."); set => Set("Keybinds", "CameraForward", value); }
+    internal static KeyboardShortcut CameraBackward { get => GetShortcut("CameraBackward", KeyCode.S, "Move the Commander camera backward."); set => Set("Keybinds", "CameraBackward", value); }
+    internal static KeyboardShortcut CameraLeft { get => GetShortcut("CameraLeft", KeyCode.A, "Move the Commander camera left."); set => Set("Keybinds", "CameraLeft", value); }
+    internal static KeyboardShortcut CameraRight { get => GetShortcut("CameraRight", KeyCode.D, "Move the Commander camera right."); set => Set("Keybinds", "CameraRight", value); }
+    internal static KeyboardShortcut CameraUp { get => GetShortcut("CameraUp", KeyCode.Q, "Move the Commander camera upward."); set => Set("Keybinds", "CameraUp", value); }
+    internal static KeyboardShortcut CameraDown { get => GetShortcut("CameraDown", KeyCode.E, "Move the Commander camera downward."); set => Set("Keybinds", "CameraDown", value); }
+    internal static KeyboardShortcut CameraFreeLook { get => GetShortcut("CameraFreeLook", KeyCode.Mouse2, "Hold while moving the mouse to look around in Commander mode."); set => Set("Keybinds", "CameraFreeLook", value); }
+    internal static KeyboardShortcut CameraBoost { get => GetShortcut("CameraBoost", KeyCode.LeftShift, "Hold for faster Commander camera movement."); set => Set("Keybinds", "CameraBoost", value); }
 
     internal static string AirCommandMode { get => Get("Air Command", "MissionMode", "AirGuard"); set => Set("Air Command", "MissionMode", value); }
     internal static string AirLoadoutBalance { get => Get("Air Command", "LoadoutBalance", "Primary"); set => Set("Air Command", "LoadoutBalance", value); }
@@ -48,7 +57,8 @@ internal static class CommanderSettings
     internal static void Initialize(ConfigFile configFile)
     {
         config = configFile;
-        _ = LimitVehiclesToOwnSide;
+        _ = ModEnabled;
+        _ = LimitToFactoryVehicles;
         _ = ShowCommandButton;
         _ = PrimaryAction;
         _ = SecondaryAction;
@@ -57,6 +67,14 @@ internal static class CommanderSettings
         _ = DeleteUnitModifier;
         _ = CameraCenterFollow;
         _ = ToggleUi;
+        _ = CameraForward;
+        _ = CameraBackward;
+        _ = CameraLeft;
+        _ = CameraRight;
+        _ = CameraUp;
+        _ = CameraDown;
+        _ = CameraFreeLook;
+        _ = CameraBoost;
         _ = SamScanQueriesPerFrame;
         _ = AirCommandMode;
         _ = AwacsRadiusKm;

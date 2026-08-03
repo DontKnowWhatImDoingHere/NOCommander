@@ -140,10 +140,13 @@ internal sealed class CommanderWorldMarkerRenderer
     private static void DrawCursorMarker(string label, Color color)
     {
         Vector2 guiPoint = CommanderUiScale.ScreenToGui(Input.mousePosition);
-        Rect marker = new(guiPoint.x + 14f, guiPoint.y + 14f, 60f, 26f);
+        GUIStyle style = CommanderUiTheme.Panel;
+        float width = GetMarkerWidth(label, style, 60f);
+        float height = GetMarkerHeight(label, style, width, 26f);
+        Rect marker = new(guiPoint.x + 14f, guiPoint.y + 14f, width, height);
         Color previous = GUI.color;
         GUI.color = color;
-        GUI.Box(marker, label, CommanderUiTheme.Panel);
+        GUI.Box(marker, label, style);
         CommanderUiTheme.DrawFrame(marker, 1f);
         GUI.color = previous;
     }
@@ -158,10 +161,13 @@ internal sealed class CommanderWorldMarkerRenderer
         }
 
         Vector2 guiPoint = CommanderUiScale.ScreenToGui(screen);
-        Rect marker = new(guiPoint.x - 30f, guiPoint.y - 13f, 60f, 26f);
+        GUIStyle style = CommanderUiTheme.Panel;
+        float width = GetMarkerWidth(label, style, 60f);
+        float height = GetMarkerHeight(label, style, width, 26f);
+        Rect marker = new(guiPoint.x - width * 0.5f, guiPoint.y - height * 0.5f, width, height);
         Color previous = GUI.color;
         GUI.color = color;
-        GUI.Box(marker, label, CommanderUiTheme.Panel);
+        GUI.Box(marker, label, style);
         CommanderUiTheme.DrawFrame(marker, 1f);
         GUI.color = previous;
     }
@@ -175,11 +181,26 @@ internal sealed class CommanderWorldMarkerRenderer
         }
 
         Vector2 guiPoint = CommanderUiScale.ScreenToGui(screen);
-        Rect marker = new(guiPoint.x - 58f, guiPoint.y - 19f, 116f, 38f);
+        GUIStyle style = CommanderUiTheme.PrimaryButton;
+        float width = GetMarkerWidth(label, style, 116f);
+        float height = GetMarkerHeight(label, style, width, 38f);
+        Rect marker = new(guiPoint.x - width * 0.5f, guiPoint.y - height * 0.5f, width, height);
         Color previous = GUI.color;
         GUI.color = color;
-        GUI.Box(marker, label, CommanderUiTheme.PrimaryButton);
+        GUI.Box(marker, label, style);
         CommanderUiTheme.DrawFrame(marker, 2f);
         GUI.color = previous;
+    }
+
+    private static float GetMarkerWidth(string label, GUIStyle style, float minimumWidth)
+    {
+        return Mathf.Max(minimumWidth, style.CalcSize(new GUIContent(label)).x + 18f);
+    }
+
+    private static float GetMarkerHeight(string label, GUIStyle style, float width, float minimumHeight)
+    {
+        float contentWidth = Mathf.Max(1f, width - style.padding.horizontal);
+        float calculatedHeight = style.CalcHeight(new GUIContent(label), contentWidth);
+        return Mathf.Max(minimumHeight, calculatedHeight + 4f);
     }
 }

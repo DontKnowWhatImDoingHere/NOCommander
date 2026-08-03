@@ -1,16 +1,19 @@
 using System;
 using System.Collections.Generic;
+using BepInEx.Configuration;
 using UnityEngine;
 
 namespace NuclearOptionCommander;
 
 internal sealed class CommanderOverlayUi
 {
+    internal static CommanderOverlayUi? Instance { get; private set; }
+
     private const int WindowId = 0x434F4D4D;
     private const int ReserveWindowId = 0x434F4D52;
     private const int PinnedWindowId = 0x434F4D50;
     private const int RadarWindowId = 0x434F4D44;
-    private const int BindingWarningWindowId = 0x434F4D42;
+    private const int SettingsWindowId = 0x434F4D53;
 
     private readonly CommanderSelectionService selectionService;
     private readonly CommanderMoveService moveService;
@@ -30,6 +33,7 @@ internal sealed class CommanderOverlayUi
     private readonly CommanderSamSiteAnalyzerUi samSiteAnalyzerUi;
     private readonly CommanderDepotUi depotUi;
     private readonly CommanderWorldMarkerRenderer worldMarkerRenderer;
+    private readonly Action unlockAdvancedFeatures;
     private readonly Action exitCommander;
 
     private bool panelVisible;
@@ -40,7 +44,10 @@ internal sealed class CommanderOverlayUi
     private bool radarHelpVisible;
     private bool selectionHelpVisible;
     private bool settingsVisible;
-    private bool uiSettingsVisible;
+    private bool settingsHelpVisible;
+    private bool advancedUnlockConfirmation;
+    private int settingsTab;
+    private string? bindingCapture;
     private bool pinnedWindowVisible = true;
     private int pinnedTab = 1;
     private bool siteAirbaseDropdownOpen;
@@ -50,8 +57,6 @@ internal sealed class CommanderOverlayUi
     private readonly Dictionary<Canvas, bool> screenshotCanvasStates = new();
     private int screenshotUiStage;
     private bool reopenTacticalMapAfterScreenshot;
-    private bool bindingWarningVisible;
-    private string missingCameraBindings = string.Empty;
     private bool showCommandButton = CommanderSettings.ShowCommandButton;
     private bool showFactionMoney = CommanderSettings.ShowFactionMoney;
     private bool showTacticalMap = CommanderSettings.ShowTacticalMap;
@@ -74,7 +79,7 @@ internal sealed class CommanderOverlayUi
     private Rect pinnedWindowRect;
     private Rect radarWindowRect;
     private Rect selectionHelpRect;
-    private Rect bindingWarningRect;
+    private Rect settingsWindowRect;
     private Rect pinnedLauncherRect;
     private Vector2 reserveScroll;
     private Vector2 pinnedScroll;
@@ -94,8 +99,10 @@ internal sealed class CommanderOverlayUi
         CommanderNavalPurchaseService navalPurchaseService,
         CommanderSamSiteAnalyzerService samSiteAnalyzerService,
         CommanderSamSiteService samSiteService,
+        Action unlockAdvancedFeatures,
         Action exitCommander)
     {
+        Instance = this;
         this.selectionService = selectionService;
         this.moveService = moveService;
         this.spawnService = spawnService;
@@ -108,6 +115,7 @@ internal sealed class CommanderOverlayUi
         this.navalPurchaseService = navalPurchaseService;
         this.samSiteAnalyzerService = samSiteAnalyzerService;
         this.samSiteService = samSiteService;
+        this.unlockAdvancedFeatures = unlockAdvancedFeatures;
         this.exitCommander = exitCommander;
         supplyHeliUi = new CommanderSupplyHeliUi(supplyHeliService);
         airCommandUi = new CommanderAirCommandUi(airCommandService);
@@ -138,8 +146,9 @@ internal sealed class CommanderOverlayUi
         samSiteAnalyzerUi.Hide();
         depotUi.Reset();
         ResetScreenshotUi();
-        bindingWarningVisible = false;
-        missingCameraBindings = string.Empty;
+        settingsVisible = false;
+        bindingCapture = null;
+        advancedUnlockConfirmation = false;
     }
 
     internal void Deactivate()
@@ -147,6 +156,9 @@ internal sealed class CommanderOverlayUi
         ResetScreenshotUi();
         panelVisible = false;
         reserveWindowVisible = false;
+        settingsVisible = false;
+        bindingCapture = null;
+        advancedUnlockConfirmation = false;
         supplyHeliUi.Hide();
         airCommandUi.Hide();
         navalPurchaseUi.Hide();
@@ -190,6 +202,13 @@ internal sealed class CommanderOverlayUi
                 Mathf.Clamp(CommanderUiScale.Height * 0.66f - 530f, 58f, CommanderUiScale.Height - 620f),
                 430f,
                 608f);
+            float settingsWidth = Mathf.Min(680f, CommanderUiScale.Width - 24f);
+            float settingsHeight = Mathf.Min(660f, CommanderUiScale.Height - 24f);
+            settingsWindowRect = new Rect(
+                Mathf.Max(12f, (CommanderUiScale.Width - settingsWidth) * 0.5f),
+                Mathf.Max(12f, (CommanderUiScale.Height - settingsHeight) * 0.5f),
+                settingsWidth,
+                settingsHeight);
             positionsInitialized = true;
         }
         else
@@ -197,10 +216,13 @@ internal sealed class CommanderOverlayUi
             panelRect.height = Mathf.Min(760f, CommanderUiScale.Height - 24f);
             reserveWindowRect.width = Mathf.Min(590f, CommanderUiScale.Width - 24f);
             reserveWindowRect.height = Mathf.Min(610f, CommanderUiScale.Height - 24f);
+            settingsWindowRect.width = Mathf.Min(680f, CommanderUiScale.Width - 24f);
+            settingsWindowRect.height = Mathf.Min(660f, CommanderUiScale.Height - 24f);
         }
         panelRect = CommanderUiTheme.ClampWindow(panelRect);
         reserveWindowRect = CommanderUiTheme.ClampWindow(reserveWindowRect);
         pinnedWindowRect = CommanderUiTheme.ClampWindow(pinnedWindowRect);
+        settingsWindowRect = CommanderUiTheme.ClampWindow(settingsWindowRect);
         pinnedLauncherRect = new Rect(
             Mathf.Min(CommanderUiScale.Width - 70f, pinnedWindowRect.xMax + 6f),
             pinnedWindowRect.y,
@@ -211,7 +233,7 @@ internal sealed class CommanderOverlayUi
             samSiteFocused ? 430f : 380f,
             CommanderUiScale.Width - 24f);
         radarWindowRect.height = Mathf.Min(
-            samSiteFocused ? 694f : 410f,
+            samSiteFocused ? 734f : 450f,
             CommanderUiScale.Height - 24f);
         radarWindowRect = CommanderUiTheme.ClampWindow(radarWindowRect);
         selectionBarRect = new Rect(
@@ -220,42 +242,41 @@ internal sealed class CommanderOverlayUi
             Mathf.Min(680f, CommanderUiScale.Width - 24f),
             74f);
         selectionHelpRect = new Rect(selectionBarRect.x, selectionBarRect.y - 92f, selectionBarRect.width, 84f);
-        bindingWarningRect = new Rect(
-            Mathf.Max(12f, (CommanderUiScale.Width - 680f) * 0.5f),
-            58f,
-            Mathf.Min(680f, CommanderUiScale.Width - 24f),
-            126f);
-        supplyHeliUi.Tick();
-        airCommandUi.Tick();
-        depotUi.Tick();
+        if (CommanderFeatureGate.AdvancedFeaturesEnabled)
+        {
+            supplyHeliUi.Tick();
+            airCommandUi.Tick();
+            depotUi.Tick();
+        }
     }
 
     internal bool ContainsScreenPoint(Vector2 screenPoint)
     {
         Vector2 guiPoint = CommanderUiScale.ScreenToGui(screenPoint);
+        bool advanced = CommanderFeatureGate.AdvancedFeaturesEnabled;
         if (screenshotUiHidden)
         {
             return false;
         }
         if (airCommandUi.Visible)
         {
-            return (showAirCommandUi && airCommandUi.ContainsScreenPoint(screenPoint))
-                || (bindingWarningVisible && bindingWarningRect.Contains(guiPoint));
+            return (advanced && showAirCommandUi && airCommandUi.ContainsScreenPoint(screenPoint))
+                || (settingsVisible && settingsWindowRect.Contains(guiPoint));
         }
         return launcherRect.Contains(guiPoint)
-            || (showFactionMoney && moneyRect.Contains(guiPoint))
+            || (advanced && showFactionMoney && moneyRect.Contains(guiPoint))
             || (panelVisible && panelRect.Contains(guiPoint))
-            || (reserveWindowVisible && reserveWindowRect.Contains(guiPoint))
+            || (advanced && reserveWindowVisible && reserveWindowRect.Contains(guiPoint))
             || (showSelectionBar && selectionService.SelectedUnits.Count > 0 && selectionBarRect.Contains(guiPoint))
             || (selectionHelpVisible && selectionHelpRect.Contains(guiPoint))
             || (showPinnedUnits && HasPinEntries && (pinnedLauncherRect.Contains(guiPoint) || (pinnedWindowVisible && pinnedWindowRect.Contains(guiPoint))))
-            || (showUnitSystems && TryGetUnitSystemsTarget(out _, out _) && radarWindowRect.Contains(guiPoint))
-            || (showDepotUi && depotUi.ContainsScreenPoint(screenPoint))
-            || (showSupplyUi && supplyHeliUi.ContainsScreenPoint(screenPoint))
-            || (showAirCommandUi && airCommandUi.ContainsScreenPoint(screenPoint))
-            || (showNavalUi && navalPurchaseUi.ContainsScreenPoint(screenPoint))
-            || (showSamAnalyzerUi && samSiteAnalyzerUi.ContainsScreenPoint(screenPoint))
-            || (bindingWarningVisible && bindingWarningRect.Contains(guiPoint));
+            || (advanced && showUnitSystems && TryGetUnitSystemsTarget(out _, out _) && radarWindowRect.Contains(guiPoint))
+            || (advanced && showDepotUi && depotUi.ContainsScreenPoint(screenPoint))
+            || (advanced && showSupplyUi && supplyHeliUi.ContainsScreenPoint(screenPoint))
+            || (advanced && showAirCommandUi && airCommandUi.ContainsScreenPoint(screenPoint))
+            || (advanced && showNavalUi && navalPurchaseUi.ContainsScreenPoint(screenPoint))
+            || (advanced && showSamAnalyzerUi && samSiteAnalyzerUi.ContainsScreenPoint(screenPoint))
+            || (settingsVisible && settingsWindowRect.Contains(guiPoint));
     }
 
     internal void DrawInactiveLauncher(Action activateCommander)
@@ -280,14 +301,15 @@ internal sealed class CommanderOverlayUi
             return;
         }
         CommanderUiTheme.Ensure();
+        bool advanced = CommanderFeatureGate.AdvancedFeaturesEnabled;
         if (showWorldMarkers)
         {
             worldMarkerRenderer.Draw(supplyHeliUi.Visible && supplyHeliUi.ShowLz);
         }
-        if (airCommandUi.Visible)
+        if (advanced && airCommandUi.Visible)
         {
             if (showAirCommandUi) airCommandUi.Draw();
-            DrawCameraBindingWarning();
+            DrawSettingsWindowIfVisible();
             return;
         }
         GUIStyle commandStyle = showCommandButton
@@ -298,7 +320,7 @@ internal sealed class CommanderOverlayUi
             panelVisible = !panelVisible;
         }
 
-        if (showFactionMoney)
+        if (advanced && showFactionMoney)
         {
             GUI.Box(moneyRect, $"FACTION FUNDS   {spawnService.GetFactionFundsLabel()}", CommanderUiTheme.Money);
         }
@@ -307,7 +329,7 @@ internal sealed class CommanderOverlayUi
         {
             panelRect = GUI.Window(WindowId, panelRect, DrawPanelWindow, "COMMANDER", CommanderUiTheme.Window);
         }
-        if (reserveWindowVisible)
+        if (advanced && reserveWindowVisible)
         {
             reserveWindowRect = GUI.Window(ReserveWindowId, reserveWindowRect, DrawReserveWindow, "FACTION RESERVE", CommanderUiTheme.Window);
         }
@@ -323,7 +345,7 @@ internal sealed class CommanderOverlayUi
                 pinnedWindowRect = GUI.Window(PinnedWindowId, pinnedWindowRect, DrawPinnedWindow, "UNIT LIST", CommanderUiTheme.Window);
             }
         }
-        if (showUnitSystems && TryGetUnitSystemsTarget(out _, out _))
+        if (advanced && showUnitSystems && TryGetUnitSystemsTarget(out _, out _))
         {
             string title = samSiteService.IsConstructionCore(selectionService.FocusedSelection)
                 ? "SAM SITE LOGISTICS"
@@ -336,23 +358,20 @@ internal sealed class CommanderOverlayUi
                 CommanderUiTheme.Window);
         }
 
-        if (showDepotUi) depotUi.Draw();
-        if (showSupplyUi) supplyHeliUi.Draw();
-        if (showAirCommandUi) airCommandUi.Draw();
-        if (showNavalUi) navalPurchaseUi.Draw();
-        if (showSamAnalyzerUi) samSiteAnalyzerUi.Draw();
+        if (advanced && showDepotUi) depotUi.Draw();
+        if (advanced && showSupplyUi) supplyHeliUi.Draw();
+        if (advanced && showAirCommandUi) airCommandUi.Draw();
+        if (advanced && showNavalUi) navalPurchaseUi.Draw();
+        if (advanced && showSamAnalyzerUi) samSiteAnalyzerUi.Draw();
         if (showSelectionBar) DrawSelectionBar();
-        DrawCameraBindingWarning();
-    }
-
-    internal void ShowCameraBindingWarning(string missingBindings)
-    {
-        missingCameraBindings = missingBindings;
-        bindingWarningVisible = !string.IsNullOrWhiteSpace(missingBindings);
+        DrawSettingsWindowIfVisible();
     }
 
     private bool screenshotUiHidden => screenshotUiStage != 0;
-    internal bool ShowTacticalMapUi => showTacticalMap && !screenshotUiHidden;
+    internal bool CommanderUiHidden => screenshotUiHidden;
+    internal bool ShowTacticalMapUi => CommanderFeatureGate.AdvancedFeaturesEnabled
+        && showTacticalMap
+        && !screenshotUiHidden;
     internal void ToggleScreenshotUi()
     {
         if (screenshotUiStage == 0)
@@ -424,7 +443,7 @@ internal sealed class CommanderOverlayUi
         {
             CommanderUiTheme.DrawHelpOverlay(
                 new Rect(12f, 34f, panelRect.width - 24f, 92f),
-                "LMB selects; Shift+LMB adds; empty LMB clears. RMB orders friendly ground units and ships. Camera controls use the Basegame movement and Free Look bindings. M opens the fullscreen map.");
+                "LMB selects; Shift+LMB adds; empty LMB clears. RMB orders friendly ground units and ships. Commander camera controls are configured under Settings > Controls. M opens the fullscreen map.");
         }
         if (GUI.Button(new Rect(panelRect.width - 34f, 3f, 26f, 22f), "X", CommanderUiTheme.Button))
         {
@@ -432,6 +451,37 @@ internal sealed class CommanderOverlayUi
         }
 
         float y = panelHelpVisible ? 136f : 38f;
+        bool advanced = CommanderFeatureGate.AdvancedFeaturesEnabled;
+        Rect unlockRect = default;
+        const string unlockTooltip = "Features behind this toggle are designed for large strategic missions such as Escalation and Terminal Control. Enabling them in other missions may break the mission.";
+        if (!advanced)
+        {
+            string mission = string.IsNullOrWhiteSpace(CommanderFeatureGate.MissionName)
+                ? "UNKNOWN MISSION"
+                : CommanderFeatureGate.MissionName.ToUpperInvariant();
+            GUI.Label(new Rect(12f, y, panelRect.width - 24f, 20f), $"CORE MODE   |   {mission}", CommanderUiTheme.MutedLabel);
+            y += 24f;
+            unlockRect = new Rect(12f, y, panelRect.width - 24f, 38f);
+            string unlockLabel = advancedUnlockConfirmation
+                ? "ARE YOU SURE? UNLOCK ALL FEATURES"
+                : "UNLOCK ALL FEATURES";
+            if (GUI.Button(unlockRect, new GUIContent(unlockLabel, unlockTooltip), CommanderUiTheme.DangerButton))
+            {
+                if (advancedUnlockConfirmation)
+                {
+                    unlockAdvancedFeatures();
+                    advancedUnlockConfirmation = false;
+                }
+                else
+                {
+                    advancedUnlockConfirmation = true;
+                }
+            }
+            y += 48f;
+        }
+
+        bool oldEnabled = GUI.enabled;
+        GUI.enabled = oldEnabled && advanced;
         GUI.Label(new Rect(12f, y, panelRect.width - 24f, 18f), "GROUND UNITS", CommanderUiTheme.MutedLabel);
         y += 20f;
         if (GUI.Button(new Rect(12f, y, panelRect.width - 24f, 34f), "SELECT NEAREST DEPOT", CommanderUiTheme.PrimaryButton))
@@ -488,7 +538,7 @@ internal sealed class CommanderOverlayUi
             : spawnService.AwaitingRallyPointSelection
                 ? "Select the rally point on the tactical map or in the 3D world."
                 : string.Empty;
-        float settingsY = panelRect.height - (settingsVisible ? 370f : 102f);
+        float settingsY = panelRect.height - 102f;
         float experimentalY = settingsY - 84f;
         if (!string.IsNullOrEmpty(helper) && experimentalY - y >= 36f)
         {
@@ -499,71 +549,11 @@ internal sealed class CommanderOverlayUi
         {
             samSiteAnalyzerUi.Toggle();
         }
+        GUI.enabled = oldEnabled;
         if (GUI.Button(new Rect(12f, settingsY, panelRect.width - 24f, 34f), "SETTINGS", CommanderUiTheme.Button))
         {
             settingsVisible = !settingsVisible;
-        }
-        if (settingsVisible)
-        {
-            float tabWidth = (panelRect.width - 46f) * 0.5f;
-            if (GUI.Button(new Rect(20f, settingsY + 40f, tabWidth, 30f), "GAMEPLAY",
-                uiSettingsVisible ? CommanderUiTheme.Button : CommanderUiTheme.SelectedButton))
-            {
-                uiSettingsVisible = false;
-            }
-            if (GUI.Button(new Rect(26f + tabWidth, settingsY + 40f, tabWidth, 30f), "UI / HIDE",
-                uiSettingsVisible ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
-            {
-                uiSettingsVisible = true;
-            }
-
-            if (!uiSettingsVisible)
-            {
-                CommanderSettings.LimitVehiclesToOwnSide = GUI.Toggle(
-                    new Rect(20f, settingsY + 78f, panelRect.width - 40f, 26f),
-                    CommanderSettings.LimitVehiclesToOwnSide,
-                    "Limit vehicles to own side (aircraft ignored)", CommanderUiTheme.Toggle);
-            }
-            else
-            {
-                float left = 20f;
-                float right = panelRect.width * 0.5f + 4f;
-                float width = panelRect.width * 0.5f - 26f;
-                showCommandButton = GUI.Toggle(new Rect(left, settingsY + 78f, width, 24f), showCommandButton, "Command button", CommanderUiTheme.Toggle);
-                showFactionMoney = GUI.Toggle(new Rect(right, settingsY + 78f, width, 24f), showFactionMoney, "Faction funds", CommanderUiTheme.Toggle);
-                showTacticalMap = GUI.Toggle(new Rect(left, settingsY + 106f, width, 24f), showTacticalMap, "Tactical map", CommanderUiTheme.Toggle);
-                showSelectionBar = GUI.Toggle(new Rect(right, settingsY + 106f, width, 24f), showSelectionBar, "Selection bar", CommanderUiTheme.Toggle);
-                showPinnedUnits = GUI.Toggle(new Rect(left, settingsY + 134f, width, 24f), showPinnedUnits, "Unit / mission list", CommanderUiTheme.Toggle);
-                showUnitSystems = GUI.Toggle(new Rect(right, settingsY + 134f, width, 24f), showUnitSystems, "Unit systems", CommanderUiTheme.Toggle);
-                showDepotUi = GUI.Toggle(new Rect(left, settingsY + 162f, width, 24f), showDepotUi, "Depot UI", CommanderUiTheme.Toggle);
-                showSupplyUi = GUI.Toggle(new Rect(right, settingsY + 162f, width, 24f), showSupplyUi, "Supply UI", CommanderUiTheme.Toggle);
-                showAirCommandUi = GUI.Toggle(new Rect(left, settingsY + 190f, width, 24f), showAirCommandUi, "Air Command UI", CommanderUiTheme.Toggle);
-                showNavalUi = GUI.Toggle(new Rect(right, settingsY + 190f, width, 24f), showNavalUi, "Naval UI", CommanderUiTheme.Toggle);
-                showWorldMarkers = GUI.Toggle(new Rect(left, settingsY + 218f, width, 24f), showWorldMarkers, "World markers", CommanderUiTheme.Toggle);
-                showSamAnalyzerUi = GUI.Toggle(new Rect(right, settingsY + 218f, width, 24f), showSamAnalyzerUi, "SAM analyzer UI", CommanderUiTheme.Toggle);
-                CommanderSettings.ShowCommandButton = showCommandButton;
-                CommanderSettings.ShowFactionMoney = showFactionMoney;
-                CommanderSettings.ShowTacticalMap = showTacticalMap;
-                CommanderSettings.ShowSelectionBar = showSelectionBar;
-                CommanderSettings.ShowPinnedUnits = showPinnedUnits;
-                CommanderSettings.ShowUnitSystems = showUnitSystems;
-                CommanderSettings.ShowDepotUi = showDepotUi;
-                CommanderSettings.ShowSupplyUi = showSupplyUi;
-                CommanderSettings.ShowAirCommandUi = showAirCommandUi;
-                CommanderSettings.ShowNavalUi = showNavalUi;
-                CommanderSettings.ShowSamAnalyzerUi = showSamAnalyzerUi;
-                CommanderSettings.ShowWorldMarkers = showWorldMarkers;
-                GUI.Label(new Rect(20f, settingsY + 246f, panelRect.width - 40f, 20f),
-                    $"UI scale is automatic for {Screen.width} x {Screen.height}: {CommanderSettings.UiScale:0.##}x",
-                    CommanderUiTheme.MutedLabel);
-                GUI.Label(new Rect(20f, settingsY + 272f, panelRect.width - 40f, 20f),
-                    $"{CommanderSettings.ToggleUi} cycles Commander UI, all UI, and visible. Keybinds: F1 Config Manager.",
-                    CommanderUiTheme.MutedLabel);
-                if (GUI.Button(new Rect(20f, settingsY + 298f, panelRect.width - 40f, 30f), "RESET UI LAYOUT", CommanderUiTheme.Button))
-                {
-                    ResetUiLayout();
-                }
-            }
+            bindingCapture = null;
         }
 
         if (GUI.Button(new Rect(12f, panelRect.height - 54f, panelRect.width - 24f, 38f), "EXIT COMMANDER MODE", CommanderUiTheme.DangerButton))
@@ -572,7 +562,317 @@ internal sealed class CommanderOverlayUi
             exitCommander();
         }
 
+        if (!advanced && unlockRect.Contains(Event.current.mousePosition))
+        {
+            Rect tooltipRect = new(12f, unlockRect.yMax + 4f, panelRect.width - 24f, 64f);
+            GUI.Box(tooltipRect, string.Empty, CommanderUiTheme.Panel);
+            GUI.Label(
+                new Rect(tooltipRect.x + 8f, tooltipRect.y + 5f, tooltipRect.width - 16f, tooltipRect.height - 10f),
+                unlockTooltip,
+                CommanderUiTheme.Label);
+        }
+
         GUI.DragWindow(new Rect(0f, 0f, panelRect.width - 72f, 28f));
+    }
+
+    private void DrawSettingsWindowIfVisible()
+    {
+        if (settingsVisible)
+        {
+            settingsWindowRect = GUI.Window(
+                SettingsWindowId,
+                settingsWindowRect,
+                DrawSettingsWindow,
+                "COMMANDER SETTINGS",
+                CommanderUiTheme.Window);
+        }
+    }
+
+    private void DrawSettingsWindow(int windowId)
+    {
+        CaptureBindingInput();
+        if (CommanderUiTheme.DrawHelpButton(settingsWindowRect.width, ref settingsHelpVisible))
+        {
+            CommanderUiTheme.DrawHelpOverlay(
+                new Rect(12f, 34f, settingsWindowRect.width - 24f, 74f),
+                "Settings are saved in the BepInEx configuration. Commander camera bindings are read only while Commander mode is active and do not alter aircraft controls.");
+        }
+        if (GUI.Button(new Rect(settingsWindowRect.width - 34f, 3f, 26f, 22f), "X", CommanderUiTheme.Button))
+        {
+            settingsVisible = false;
+            bindingCapture = null;
+        }
+
+        float y = settingsHelpVisible ? 118f : 38f;
+        float tabWidth = (settingsWindowRect.width - 36f) / 3f;
+        DrawSettingsTab(new Rect(12f, y, tabWidth, 32f), "GAMEPLAY", 0);
+        DrawSettingsTab(new Rect(12f + tabWidth, y, tabWidth, 32f), "UI / HIDE", 1);
+        DrawSettingsTab(new Rect(12f + tabWidth * 2f, y, tabWidth, 32f), "CONTROLS", 2);
+        y += 44f;
+
+        if (settingsTab == 0)
+        {
+            DrawGameplaySettings(y);
+        }
+        else if (settingsTab == 1)
+        {
+            DrawUiSettings(y);
+        }
+        else
+        {
+            DrawControlSettings(y);
+        }
+
+        GUI.DragWindow(new Rect(0f, 0f, settingsWindowRect.width - 72f, 28f));
+    }
+
+    private void DrawSettingsTab(Rect rect, string label, int tab)
+    {
+        if (GUI.Button(rect, label, settingsTab == tab ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
+        {
+            settingsTab = tab;
+            bindingCapture = null;
+        }
+    }
+
+    private void DrawGameplaySettings(float y)
+    {
+        GUI.Box(new Rect(12f, y, settingsWindowRect.width - 24f, 92f), string.Empty, CommanderUiTheme.Panel);
+        GUI.Label(new Rect(24f, y + 10f, settingsWindowRect.width - 48f, 22f), "SPAWN RESTRICTIONS", CommanderUiTheme.Header);
+        CommanderSettings.LimitToFactoryVehicles = GUI.Toggle(
+            new Rect(24f, y + 42f, settingsWindowRect.width - 48f, 30f),
+            CommanderSettings.LimitToFactoryVehicles,
+            "Limit to vehicles from factories",
+            CommanderUiTheme.Toggle);
+    }
+
+    private void DrawUiSettings(float y)
+    {
+        GUI.Box(new Rect(12f, y, settingsWindowRect.width - 24f, 306f), string.Empty, CommanderUiTheme.Panel);
+        float left = 28f;
+        float right = settingsWindowRect.width * 0.5f + 10f;
+        float width = settingsWindowRect.width * 0.5f - 40f;
+        showCommandButton = GUI.Toggle(new Rect(left, y + 16f, width, 28f), showCommandButton, "Command button", CommanderUiTheme.Toggle);
+        showFactionMoney = GUI.Toggle(new Rect(right, y + 16f, width, 28f), showFactionMoney, "Faction funds", CommanderUiTheme.Toggle);
+        showTacticalMap = GUI.Toggle(new Rect(left, y + 50f, width, 28f), showTacticalMap, "Tactical map", CommanderUiTheme.Toggle);
+        showSelectionBar = GUI.Toggle(new Rect(right, y + 50f, width, 28f), showSelectionBar, "Selection bar", CommanderUiTheme.Toggle);
+        showPinnedUnits = GUI.Toggle(new Rect(left, y + 84f, width, 28f), showPinnedUnits, "Unit / mission list", CommanderUiTheme.Toggle);
+        showUnitSystems = GUI.Toggle(new Rect(right, y + 84f, width, 28f), showUnitSystems, "Unit systems", CommanderUiTheme.Toggle);
+        showDepotUi = GUI.Toggle(new Rect(left, y + 118f, width, 28f), showDepotUi, "Depot UI", CommanderUiTheme.Toggle);
+        showSupplyUi = GUI.Toggle(new Rect(right, y + 118f, width, 28f), showSupplyUi, "Supply UI", CommanderUiTheme.Toggle);
+        showAirCommandUi = GUI.Toggle(new Rect(left, y + 152f, width, 28f), showAirCommandUi, "Air Command UI", CommanderUiTheme.Toggle);
+        showNavalUi = GUI.Toggle(new Rect(right, y + 152f, width, 28f), showNavalUi, "Naval UI", CommanderUiTheme.Toggle);
+        showWorldMarkers = GUI.Toggle(new Rect(left, y + 186f, width, 28f), showWorldMarkers, "World markers", CommanderUiTheme.Toggle);
+        showSamAnalyzerUi = GUI.Toggle(new Rect(right, y + 186f, width, 28f), showSamAnalyzerUi, "SAM analyzer UI", CommanderUiTheme.Toggle);
+
+        SaveUiVisibilitySettings();
+        GUI.Label(
+            new Rect(28f, y + 226f, settingsWindowRect.width - 56f, 20f),
+            $"Automatic UI scale for {Screen.width} x {Screen.height}: {CommanderSettings.UiScale:0.##}x",
+            CommanderUiTheme.MutedLabel);
+        GUI.Label(
+            new Rect(28f, y + 250f, settingsWindowRect.width - 56f, 20f),
+            $"{CommanderSettings.ToggleUi} cycles visible, Commander UI hidden, and all UI hidden.",
+            CommanderUiTheme.MutedLabel);
+        if (GUI.Button(new Rect(28f, y + 274f, settingsWindowRect.width - 56f, 30f), "RESET UI LAYOUT", CommanderUiTheme.Button))
+        {
+            ResetUiLayout();
+        }
+    }
+
+    private void SaveUiVisibilitySettings()
+    {
+        CommanderSettings.ShowCommandButton = showCommandButton;
+        CommanderSettings.ShowFactionMoney = showFactionMoney;
+        CommanderSettings.ShowTacticalMap = showTacticalMap;
+        CommanderSettings.ShowSelectionBar = showSelectionBar;
+        CommanderSettings.ShowPinnedUnits = showPinnedUnits;
+        CommanderSettings.ShowUnitSystems = showUnitSystems;
+        CommanderSettings.ShowDepotUi = showDepotUi;
+        CommanderSettings.ShowSupplyUi = showSupplyUi;
+        CommanderSettings.ShowAirCommandUi = showAirCommandUi;
+        CommanderSettings.ShowNavalUi = showNavalUi;
+        CommanderSettings.ShowSamAnalyzerUi = showSamAnalyzerUi;
+        CommanderSettings.ShowWorldMarkers = showWorldMarkers;
+    }
+
+    private void DrawControlSettings(float y)
+    {
+        GUI.Box(new Rect(12f, y, settingsWindowRect.width - 24f, 480f), string.Empty, CommanderUiTheme.Panel);
+        GUI.Label(
+            new Rect(24f, y + 8f, settingsWindowRect.width - 48f, 32f),
+            "Bindings are active only in Commander mode. Click one, then press a keyboard or mouse button. Escape cancels.",
+            CommanderUiTheme.MutedLabel);
+
+        float columnWidth = (settingsWindowRect.width - 66f) * 0.5f;
+        float left = 24f;
+        float right = 42f + columnWidth;
+        GUI.Label(new Rect(left, y + 42f, columnWidth, 22f), "CAMERA", CommanderUiTheme.Header);
+        GUI.Label(new Rect(right, y + 42f, columnWidth, 22f), "COMMANDER ACTIONS", CommanderUiTheme.Header);
+        float rowY = y + 68f;
+        DrawBinding(new Rect(left, rowY, columnWidth, 32f), "Forward", "forward");
+        DrawBinding(new Rect(left, rowY + 36f, columnWidth, 32f), "Backward", "backward");
+        DrawBinding(new Rect(left, rowY + 72f, columnWidth, 32f), "Move left", "left");
+        DrawBinding(new Rect(left, rowY + 108f, columnWidth, 32f), "Move right", "right");
+        DrawBinding(new Rect(left, rowY + 144f, columnWidth, 32f), "Move up", "up");
+        DrawBinding(new Rect(left, rowY + 180f, columnWidth, 32f), "Move down", "down");
+        DrawBinding(new Rect(left, rowY + 216f, columnWidth, 32f), "Free look", "look");
+        DrawBinding(new Rect(left, rowY + 252f, columnWidth, 32f), "Speed boost", "boost");
+        Rect centerFollowRect = new(left, rowY + 288f, columnWidth, 32f);
+        DrawBinding(centerFollowRect, "Center / follow", "center_follow");
+
+        DrawBinding(new Rect(right, rowY, columnWidth, 32f), "Select / place", "primary");
+        DrawBinding(new Rect(right, rowY + 36f, columnWidth, 32f), "Move / order", "secondary");
+        DrawBinding(new Rect(right, rowY + 72f, columnWidth, 32f), "Add selection", "add_selection");
+        DrawBinding(new Rect(right, rowY + 108f, columnWidth, 32f), "Repeat deploy", "repeat_deploy");
+        DrawBinding(new Rect(right, rowY + 144f, columnWidth, 32f), "Delete modifier", "delete_modifier");
+        DrawBinding(new Rect(right, rowY + 180f, columnWidth, 32f), "UI cycle", "toggle_ui");
+
+        if (centerFollowRect.Contains(Event.current.mousePosition))
+        {
+            CommanderUiTheme.DrawHelpOverlay(
+                new Rect(right, rowY + 288f, columnWidth, 68f),
+                "Press briefly to center on the selected unit. Hold to center and follow it.");
+        }
+
+        if (GUI.Button(new Rect(left, y + 432f, columnWidth, 32f), "RESET CAMERA", CommanderUiTheme.Button))
+        {
+            ResetCameraBindings();
+            bindingCapture = null;
+        }
+        if (GUI.Button(new Rect(right, y + 432f, columnWidth, 32f), "RESET ACTIONS", CommanderUiTheme.Button))
+        {
+            ResetActionBindings();
+            bindingCapture = null;
+        }
+    }
+
+    private void DrawBinding(Rect rect, string label, string binding)
+    {
+        float labelWidth = Mathf.Min(94f, rect.width * 0.36f);
+        GUI.Label(new Rect(rect.x, rect.y, labelWidth, rect.height), label, CommanderUiTheme.Label);
+        string buttonText = bindingCapture == binding ? "PRESS KEY..." : GetBinding(binding).ToString();
+        if (GUI.Button(
+            new Rect(rect.x + labelWidth, rect.y, rect.width - labelWidth - 34f, rect.height),
+            buttonText,
+            bindingCapture == binding ? CommanderUiTheme.SelectedButton : CommanderUiTheme.Button))
+        {
+            bindingCapture = binding;
+        }
+        if (GUI.Button(new Rect(rect.xMax - 28f, rect.y, 28f, rect.height), "X", CommanderUiTheme.Button))
+        {
+            SetBinding(binding, new KeyboardShortcut(KeyCode.None));
+            bindingCapture = null;
+        }
+    }
+
+    private void CaptureBindingInput()
+    {
+        if (bindingCapture == null)
+        {
+            return;
+        }
+
+        Event current = Event.current;
+        KeyCode key;
+        if (current.type == EventType.KeyDown)
+        {
+            if (current.keyCode == KeyCode.Escape)
+            {
+                bindingCapture = null;
+                current.Use();
+                return;
+            }
+            key = current.keyCode;
+            if (key == KeyCode.None)
+            {
+                return;
+            }
+        }
+        else if (current.type == EventType.MouseDown)
+        {
+            key = (KeyCode)((int)KeyCode.Mouse0 + current.button);
+        }
+        else
+        {
+            return;
+        }
+
+        List<KeyCode> modifiers = new();
+        if (current.shift && key != KeyCode.LeftShift && key != KeyCode.RightShift) modifiers.Add(KeyCode.LeftShift);
+        if (current.control && key != KeyCode.LeftControl && key != KeyCode.RightControl) modifiers.Add(KeyCode.LeftControl);
+        if (current.alt && key != KeyCode.LeftAlt && key != KeyCode.RightAlt) modifiers.Add(KeyCode.LeftAlt);
+        SetBinding(bindingCapture, new KeyboardShortcut(key, modifiers.ToArray()));
+        bindingCapture = null;
+        current.Use();
+    }
+
+    private static KeyboardShortcut GetBinding(string binding)
+    {
+        return binding switch
+        {
+            "forward" => CommanderSettings.CameraForward,
+            "backward" => CommanderSettings.CameraBackward,
+            "left" => CommanderSettings.CameraLeft,
+            "right" => CommanderSettings.CameraRight,
+            "up" => CommanderSettings.CameraUp,
+            "down" => CommanderSettings.CameraDown,
+            "look" => CommanderSettings.CameraFreeLook,
+            "boost" => CommanderSettings.CameraBoost,
+            "primary" => CommanderSettings.PrimaryAction,
+            "secondary" => CommanderSettings.SecondaryAction,
+            "add_selection" => CommanderSettings.AddToSelection,
+            "repeat_deploy" => CommanderSettings.RepeatDeployment,
+            "delete_modifier" => CommanderSettings.DeleteUnitModifier,
+            "center_follow" => CommanderSettings.CameraCenterFollow,
+            "toggle_ui" => CommanderSettings.ToggleUi,
+            _ => new KeyboardShortcut(KeyCode.None)
+        };
+    }
+
+    private static void SetBinding(string binding, KeyboardShortcut shortcut)
+    {
+        switch (binding)
+        {
+            case "forward": CommanderSettings.CameraForward = shortcut; break;
+            case "backward": CommanderSettings.CameraBackward = shortcut; break;
+            case "left": CommanderSettings.CameraLeft = shortcut; break;
+            case "right": CommanderSettings.CameraRight = shortcut; break;
+            case "up": CommanderSettings.CameraUp = shortcut; break;
+            case "down": CommanderSettings.CameraDown = shortcut; break;
+            case "look": CommanderSettings.CameraFreeLook = shortcut; break;
+            case "boost": CommanderSettings.CameraBoost = shortcut; break;
+            case "primary": CommanderSettings.PrimaryAction = shortcut; break;
+            case "secondary": CommanderSettings.SecondaryAction = shortcut; break;
+            case "add_selection": CommanderSettings.AddToSelection = shortcut; break;
+            case "repeat_deploy": CommanderSettings.RepeatDeployment = shortcut; break;
+            case "delete_modifier": CommanderSettings.DeleteUnitModifier = shortcut; break;
+            case "center_follow": CommanderSettings.CameraCenterFollow = shortcut; break;
+            case "toggle_ui": CommanderSettings.ToggleUi = shortcut; break;
+        }
+    }
+
+    private static void ResetCameraBindings()
+    {
+        CommanderSettings.CameraForward = new KeyboardShortcut(KeyCode.W);
+        CommanderSettings.CameraBackward = new KeyboardShortcut(KeyCode.S);
+        CommanderSettings.CameraLeft = new KeyboardShortcut(KeyCode.A);
+        CommanderSettings.CameraRight = new KeyboardShortcut(KeyCode.D);
+        CommanderSettings.CameraUp = new KeyboardShortcut(KeyCode.Q);
+        CommanderSettings.CameraDown = new KeyboardShortcut(KeyCode.E);
+        CommanderSettings.CameraFreeLook = new KeyboardShortcut(KeyCode.Mouse2);
+        CommanderSettings.CameraBoost = new KeyboardShortcut(KeyCode.LeftShift);
+        CommanderSettings.CameraCenterFollow = new KeyboardShortcut(KeyCode.Space);
+    }
+
+    private static void ResetActionBindings()
+    {
+        CommanderSettings.PrimaryAction = new KeyboardShortcut(KeyCode.Mouse0);
+        CommanderSettings.SecondaryAction = new KeyboardShortcut(KeyCode.Mouse1);
+        CommanderSettings.AddToSelection = new KeyboardShortcut(KeyCode.LeftShift);
+        CommanderSettings.RepeatDeployment = new KeyboardShortcut(KeyCode.LeftShift);
+        CommanderSettings.DeleteUnitModifier = new KeyboardShortcut(KeyCode.LeftAlt);
+        CommanderSettings.ToggleUi = new KeyboardShortcut(KeyCode.H);
     }
 
     private void ResetUiLayout()
@@ -629,20 +929,23 @@ internal sealed class CommanderOverlayUi
         if (selectionHelpVisible)
         {
             CommanderUiTheme.DrawHelpOverlay(selectionHelpRect,
-                "STOP cancels orders and holds friendly ground/ship units. AI returns them to Basegame tasking. ROAD toggles Basegame roads for one friendly ground vehicle. PIN stores the selection; hold Alt to expose DEL. Aircraft and enemy units can be selected but not commanded.");
+                "STOP cancels orders and holds friendly ground/ship units. AI returns them to Basegame tasking; munitions trucks resume RearmVehicleAI logistics. ROAD toggles Basegame roads for one friendly ground vehicle. PIN stores the selection; hold Alt to expose DEL. Aircraft and enemy units can be selected but not commanded.");
         }
         bool oldEnabled = GUI.enabled;
+        bool advanced = CommanderFeatureGate.AdvancedFeaturesEnabled;
         GUI.enabled = oldEnabled && moveService.HasCommandableSelection;
         if (GUI.Button(new Rect(buttonX, selectionBarRect.y + 32f, 72f, 34f), "STOP", CommanderUiTheme.DangerButton))
         {
             moveService.StopSelectedUnits();
         }
+        GUI.enabled = oldEnabled && advanced && moveService.HasCommandableSelection;
         if (GUI.Button(new Rect(buttonX + 78f, selectionBarRect.y + 32f, 72f, 34f), "AI", CommanderUiTheme.PrimaryButton))
         {
             moveService.ResumeAiForSelectedUnits();
         }
         GUI.enabled = oldEnabled;
-        bool canToggleRoad = count == 1
+        bool canToggleRoad = advanced
+            && count == 1
             && focused != null
             && directPathService.CanConfigure(focused)
             && !CommanderMobileEmplacementService.IsReservedHauler(focused)
@@ -658,7 +961,9 @@ internal sealed class CommanderOverlayUi
         GUI.enabled = oldEnabled;
         bool deleteMode = CommanderSettings.DeleteUnitModifier.IsPressed();
         string pinLabel = deleteMode ? "DEL" : (selectionService.IsCurrentSelectionPinned ? "UNPIN" : "PIN");
-        GUI.enabled = oldEnabled && (!deleteMode || selectionService.CanDeleteSelection);
+        GUI.enabled = oldEnabled
+            && advanced
+            && (!deleteMode || selectionService.CanDeleteSelection);
         if (GUI.Button(new Rect(buttonX + 244f, selectionBarRect.y + 32f, 82f, 34f), pinLabel,
             deleteMode ? CommanderUiTheme.DangerButton : CommanderUiTheme.Button))
         {
@@ -875,6 +1180,21 @@ internal sealed class CommanderOverlayUi
             }
             GUI.enabled = oldEnabled;
             y += 42f;
+            if (matches)
+            {
+                float altitude = samSiteAnalyzerService.CoverageTargetAltitude;
+                GUI.Label(
+                    new Rect(12f, y, radarWindowRect.width - 24f, 24f),
+                    $"TARGET ALTITUDE  {altitude:0} m AGL",
+                    CommanderUiTheme.MutedLabel);
+                float selectedAltitude = GUI.HorizontalSlider(
+                    new Rect(12f, y + 26f, radarWindowRect.width - 24f, 22f),
+                    altitude,
+                    0f,
+                    2000f);
+                samSiteAnalyzerService.SetCoverageTargetAltitude(selectedAltitude);
+                y += 52f;
+            }
             if (building)
             {
                 GUI.HorizontalSlider(
@@ -1300,29 +1620,4 @@ internal sealed class CommanderOverlayUi
         GUI.DragWindow(new Rect(0f, 0f, reserveWindowRect.width - 72f, 28f));
     }
 
-    private void DrawCameraBindingWarning()
-    {
-        if (!bindingWarningVisible || screenshotUiHidden)
-        {
-            return;
-        }
-
-        bindingWarningRect = GUI.Window(
-            BindingWarningWindowId,
-            bindingWarningRect,
-            _ =>
-            {
-                GUI.Label(new Rect(14f, 34f, bindingWarningRect.width - 62f, 46f),
-                    $"Missing camera controls: {missingCameraBindings}", CommanderUiTheme.Header);
-                GUI.Label(new Rect(14f, 80f, bindingWarningRect.width - 28f, 34f),
-                    "Open Options > Controls and assign these Basegame actions before using the free camera.", CommanderUiTheme.Label);
-                if (GUI.Button(new Rect(bindingWarningRect.width - 38f, 4f, 28f, 24f), "X", CommanderUiTheme.DangerButton))
-                {
-                    bindingWarningVisible = false;
-                }
-                GUI.DragWindow(new Rect(0f, 0f, bindingWarningRect.width - 46f, 28f));
-            },
-            "CAMERA CONTROLS REQUIRED",
-            CommanderUiTheme.Window);
-    }
 }
